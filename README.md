@@ -1,0 +1,2 @@
+# Equtiy-AI
+AI projekt 
