@@ -9,6 +9,7 @@
     "dev": "ts-node src/api/server.ts",
     "dev:local": "ts-node --transpile-only src/localDev/server.ts",
     "test:fmp-nvda": "ts-node --transpile-only src/localDev/testFmpNvidiaRevenue.ts",
+    "calc:growth-nvda": "ts-node --transpile-only src/localDev/calculateNvidiaGrowthMetrics.ts",
     "build": "tsc -p tsconfig.json",
     "migrate": "echo 'Run schema/*.sql in order against your Postgres/Supabase instance (e.g. psql $DATABASE_URL -f schema/001_core_tables.sql ...)'"
   },
