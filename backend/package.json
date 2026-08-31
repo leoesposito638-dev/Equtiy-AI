@@ -13,6 +13,7 @@
     "verify:scoring-repo-nvda": "ts-node --transpile-only src/localDev/verifyGrowthScoringRepoNvda.ts",
     "verify:benchmark-infra": "ts-node --transpile-only src/localDev/verifyBenchmarkInfrastructureNvda.ts",
     "ingest:batch1": "ts-node --transpile-only src/localDev/ingestBatch1Companies.ts",
+    "ingest:batch2": "ts-node --transpile-only src/localDev/ingestBatch2Companies.ts",
     "build": "tsc -p tsconfig.json",
     "migrate": "echo 'Run schema/*.sql in order against your Postgres/Supabase instance (e.g. psql $DATABASE_URL -f schema/001_core_tables.sql ...)'"
   },
