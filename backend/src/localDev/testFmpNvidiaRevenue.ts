@@ -103,7 +103,7 @@ async function main() {
   if (sourceErr || !sourceRow) fail(`Could not read back the data_sources row: ${sourceErr?.message}`);
 
   console.log(`\n✅ Full pipeline proof — ${TICKER} revenue\n`);
-  console.log(`1. FMP endpoint used:        https://financialmodelingprep.com/api/v3/income-statement/${TICKER}?period=annual&limit=1&apikey=***REDACTED***`);
+  console.log(`1. FMP endpoint used:        https://financialmodelingprep.com/stable/income-statement?symbol=${TICKER}&period=annual&limit=1&apikey=***REDACTED***`);
   console.log(`2. FMP request succeeded:    yes (see accepted=${result.accepted} above; a failed/empty FMP response would have produced accepted=0 and a logged reason, not this section)`);
   console.log(`3. Value FMP returned:       ${rawRow!.raw_value} ${rawRow!.currency} (raw_financial_data.raw_value, unmodified from FMP)`);
   console.log(`4. raw_financial_data row:   id=${rawRow!.id}`);

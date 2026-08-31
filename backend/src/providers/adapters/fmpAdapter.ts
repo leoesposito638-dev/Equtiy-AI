@@ -32,7 +32,10 @@ import type {
 } from "../interfaces";
 import type { PeriodType } from "../../types/domain";
 
-const FMP_BASE_URL = "https://financialmodelingprep.com/api/v3";
+// FMP retired the /api/v3/* endpoints (legacy, pre-2025-08-31 subscriptions only)
+// in favor of /stable/* — same response shape, symbol passed as a query param
+// instead of a path segment. See https://site.financialmodelingprep.com/developer/docs/stable/income-statement
+const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
 
 /** Strips the apikey query param before a URL is stored in data_sources.source_url
  *  or surfaced anywhere — the secret must never end up in the database or in
@@ -95,8 +98,8 @@ export class FmpFinancialDataAdapter implements FinancialDataProvider {
     }
 
     const requestUrl =
-      `${FMP_BASE_URL}/income-statement/${encodeURIComponent(ref.ticker)}` +
-      `?period=${periodParam}&limit=1&apikey=${encodeURIComponent(this.apiKey)}`;
+      `${FMP_BASE_URL}/income-statement` +
+      `?symbol=${encodeURIComponent(ref.ticker)}&period=${periodParam}&limit=1&apikey=${encodeURIComponent(this.apiKey)}`;
     const redactedUrl = redactApiKey(requestUrl);
 
     let httpResponse: Response;
