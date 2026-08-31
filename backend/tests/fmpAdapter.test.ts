@@ -52,6 +52,67 @@ describe("FmpFinancialDataAdapter.getIncomeStatement — happy path", () => {
   });
 });
 
+describe("FmpFinancialDataAdapter.getIncomeStatement — multi-metric, multi-period (Milestone 2: GROWTH raw data)", () => {
+  it("maps revenue, net_income, and eps from a single row into three RawLineItems", async () => {
+    mockFetchOnce(200, [
+      { date: "2026-01-26", reportedCurrency: "USD", period: "FY", revenue: 130_497_000_000, netIncome: 72_880_000_000, eps: 2.94, fillingDate: "2026-02-20" },
+    ]);
+    const adapter = new FmpFinancialDataAdapter("test-key");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+
+    expect(result.status).toBe("available");
+    expect(result.data).toHaveLength(3);
+    const byMetric = Object.fromEntries(result.data!.map((i) => [i.metricName, i]));
+    expect(byMetric.revenue).toMatchObject({ rawValue: 130_497_000_000, unit: "USD", periodEnd: "2026-01-26" });
+    expect(byMetric.net_income).toMatchObject({ rawValue: 72_880_000_000, unit: "USD", periodEnd: "2026-01-26" });
+    expect(byMetric.eps).toMatchObject({ rawValue: 2.94, unit: "USD_PER_SHARE", periodEnd: "2026-01-26" });
+  });
+
+  it("requests up to 4 trailing periods and maps line items across all of them", async () => {
+    mockFetchOnce(200, [
+      { date: "2026-01-26", reportedCurrency: "USD", period: "FY", revenue: 130, netIncome: 72, eps: 2.9 },
+      { date: "2025-01-26", reportedCurrency: "USD", period: "FY", revenue: 96, netIncome: 50, eps: 2.0 },
+      { date: "2024-01-28", reportedCurrency: "USD", period: "FY", revenue: 26, netIncome: 9, eps: 0.4 },
+      { date: "2023-01-29", reportedCurrency: "USD", period: "FY", revenue: 26, netIncome: 4, eps: 0.17 },
+    ]);
+    const adapter = new FmpFinancialDataAdapter("test-key");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+
+    expect(result.status).toBe("available");
+    expect(result.data).toHaveLength(12); // 4 periods x 3 metrics
+    const periodEnds = new Set(result.data!.map((i) => i.periodEnd));
+    expect(periodEnds).toEqual(new Set(["2026-01-26", "2025-01-26", "2024-01-28", "2023-01-29"]));
+    // request URL asked FMP for 4 periods, not just 1
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock.mock.calls[0]![0]).toContain("limit=4");
+  });
+
+  it("a row missing one metric still yields line items for the metrics it does have", async () => {
+    mockFetchOnce(200, [
+      { date: "2026-01-26", reportedCurrency: "USD", period: "FY", revenue: 130_497_000_000, netIncome: 72_880_000_000 /* no eps */ },
+    ]);
+    const adapter = new FmpFinancialDataAdapter("test-key");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+
+    expect(result.status).toBe("available");
+    expect(result.data).toHaveLength(2);
+    expect(result.data!.map((i) => i.metricName).sort()).toEqual(["net_income", "revenue"]);
+  });
+
+  it("a structurally-broken row is skipped without blocking metrics from other valid rows", async () => {
+    mockFetchOnce(200, [
+      { date: "2026-01-26", reportedCurrency: "USD", period: "FY", revenue: 130, netIncome: 72, eps: 2.9 },
+      { date: "2025-01-26", /* missing reportedCurrency */ period: "FY", revenue: 96, netIncome: 50, eps: 2.0 },
+    ]);
+    const adapter = new FmpFinancialDataAdapter("test-key");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+
+    expect(result.status).toBe("available");
+    expect(result.data).toHaveLength(3); // only the first row's 3 metrics
+    expect(result.data!.every((i) => i.periodEnd === "2026-01-26")).toBe(true);
+  });
+});
+
 describe("FmpFinancialDataAdapter.getIncomeStatement — never fabricates", () => {
   it("returns unavailable (not a fabricated 0) when FMP returns an empty array", async () => {
     mockFetchOnce(200, []);

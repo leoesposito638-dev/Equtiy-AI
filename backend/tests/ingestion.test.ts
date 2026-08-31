@@ -71,6 +71,31 @@ describe("duplicate observations", () => {
   });
 });
 
+describe("Milestone 2 — net_income / eps (GROWTH raw data) flow through unchanged validate/normalize", () => {
+  it("validates and normalizes a net_income observation, including a legitimately negative one", () => {
+    const item = baseItem({ metricName: "net_income", rawValue: -1_200_000 });
+    const validation = validateRawLineItem(item, new Set());
+    expect(validation.valid).toBe(true);
+    const { metric } = normalizeLineItem(item, "company-1", "source-1", "USD");
+    expect(metric).toMatchObject({ metricName: "net_income", value: -1_200_000, metricCategory: "INCOME_STATEMENT", calculationType: "DIRECT" });
+  });
+
+  it("validates and normalizes an eps observation", () => {
+    const item = baseItem({ metricName: "eps", rawValue: 2.94, unit: "USD_PER_SHARE" });
+    const validation = validateRawLineItem(item, new Set());
+    expect(validation.valid).toBe(true);
+    const { metric } = normalizeLineItem(item, "company-1", "source-1", "USD");
+    expect(metric).toMatchObject({ metricName: "eps", value: 2.94, unit: "USD_PER_SHARE", metricCategory: "INCOME_STATEMENT" });
+  });
+
+  it("still flags each metric/period_end combination independently for duplicates", () => {
+    const existingKeys = new Set(["revenue|2026-06-30|QUARTER"]);
+    // Same period, different metric — must NOT be treated as a duplicate of revenue.
+    const result = validateRawLineItem(baseItem({ metricName: "net_income" }), existingKeys);
+    expect(result.valid).toBe(true);
+  });
+});
+
 describe("impossible values", () => {
   it("flags a structurally-impossible negative value (e.g. revenue < 0)", () => {
     const result = validateRawLineItem(baseItem({ rawValue: -500 }), new Set());
