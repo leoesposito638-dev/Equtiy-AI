@@ -13,6 +13,8 @@ import {
   unavailableFilingProvider,
 } from "./adapters/unavailableProvider";
 import { FmpFinancialDataAdapter } from "./adapters/fmpAdapter";
+import { SecEdgarAdapter } from "./adapters/secEdgarAdapter";
+import { ProviderResolver } from "./resolver";
 import type {
   MarketDataProvider,
   FinancialDataProvider,
@@ -30,13 +32,24 @@ export interface ProviderRegistry {
 }
 
 export function buildProviderRegistry(): ProviderRegistry {
-  // FMP_API_KEY is read here — the only place financialData construction
-  // happens — and never logged or hardcoded. If it's absent, financialData
-  // falls back to the honest "unavailable" adapter, same as every other
-  // not-yet-connected provider below.
-  const financialData = process.env.FMP_API_KEY
-    ? new FmpFinancialDataAdapter(process.env.FMP_API_KEY)
-    : unavailableFinancialDataProvider;
+  // FMP_API_KEY / SEC_EDGAR_USER_AGENT are read here — the only place
+  // financialData construction happens — and never logged or hardcoded.
+  // financialData resolves through a ProviderResolver (Milestone 8B):
+  // SEC EDGAR first (primary — see Milestone 8A Part 9), FMP as fallback.
+  // Each is included only if its credential/config is present; if neither
+  // is present, financialData falls back to the honest "unavailable"
+  // adapter, same as every other not-yet-connected provider below.
+  const financialDataProviders: FinancialDataProvider[] = [];
+  if (process.env.SEC_EDGAR_USER_AGENT) {
+    financialDataProviders.push(new SecEdgarAdapter(process.env.SEC_EDGAR_USER_AGENT));
+  }
+  if (process.env.FMP_API_KEY) {
+    financialDataProviders.push(new FmpFinancialDataAdapter(process.env.FMP_API_KEY));
+  }
+  const financialData =
+    financialDataProviders.length > 0
+      ? new ProviderResolver(financialDataProviders)
+      : unavailableFinancialDataProvider;
 
   return {
     marketData: unavailableMarketDataProvider,
