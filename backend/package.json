@@ -11,6 +11,7 @@
     "test:fmp-nvda": "ts-node --transpile-only src/localDev/testFmpNvidiaRevenue.ts",
     "calc:growth-nvda": "ts-node --transpile-only src/localDev/calculateNvidiaGrowthMetrics.ts",
     "verify:scoring-repo-nvda": "ts-node --transpile-only src/localDev/verifyGrowthScoringRepoNvda.ts",
+    "verify:benchmark-infra": "ts-node --transpile-only src/localDev/verifyBenchmarkInfrastructureNvda.ts",
     "build": "tsc -p tsconfig.json",
     "migrate": "echo 'Run schema/*.sql in order against your Postgres/Supabase instance (e.g. psql $DATABASE_URL -f schema/001_core_tables.sql ...)'"
   },

@@ -77,6 +77,15 @@ export interface CalculatedMetric {
   inputDataHash: string;
 }
 
+/** Milestone 5: the two approved V1 tiers. No INDUSTRY/SUB_INDUSTRY tier. */
+export type BenchmarkType = "SECTOR" | "MARKET_WIDE";
+
+/** Milestone 5: the four approved scoring-provenance states. SECTOR/MARKET_WIDE/
+ *  UNAVAILABLE are decided at the benchmark-lookup layer (see
+ *  scoring/benchmarkResolver.ts); TREND_ONLY is scoreCategory.ts's own,
+ *  pre-existing internal fallback and is not produced by that resolver. */
+export type BenchmarkProvenance = "SECTOR" | "MARKET_WIDE" | "TREND_ONLY" | "UNAVAILABLE";
+
 export interface MetricBenchmark {
   metricName: string;
   sector?: string;
@@ -87,6 +96,11 @@ export interface MetricBenchmark {
   p75: number;
   p90: number;
   sampleSize: number;
+  /** Milestone 5 additions — optional so existing construction sites
+   *  (e.g. tests/scoring.test.ts's makeBenchmark helper) remain valid. */
+  benchmarkType?: BenchmarkType;
+  benchmarkVersion?: string;
+  calculatedAt?: string;
 }
 
 export interface ScoreCategory {
@@ -130,6 +144,12 @@ export interface CategoryScore {
   coverage: number;   // 0..1 — fraction of score_rules that had enough data
   calculationVersion: string;
   calculatedAt: string;
+  /** Milestone 5: metric_name -> BenchmarkProvenance for each rule that
+   *  contributed to this category score. Optional and NOT populated by
+   *  scoreCategory.ts yet — see the Milestone 5 report for the specific,
+   *  proposed (not implemented) integration point. Mirrors
+   *  category_scores.rule_provenance (schema/006_benchmark_provenance.sql). */
+  ruleProvenance?: Record<string, BenchmarkProvenance>;
 }
 
 export interface FundamentalScore {
