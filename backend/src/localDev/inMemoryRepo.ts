@@ -46,10 +46,13 @@ function rule(categoryId: string, metricName: string, weight: number, direction:
   return { id: `${categoryId}-${metricName}`, categoryId, metricName, ruleType, weight, direction, minimumDataPoints: minPoints, sectorSpecific: true, version: "v1.0", active: true };
 }
 
+// minimum_data_points below are pinned to match schema/004_seed_scoring_config.sql
+// exactly (the live scoring configuration is the source of truth — this
+// in-memory config must never silently contradict it; see Milestone 4A).
 const RULES: ScoreRule[] = [
-  rule("GROWTH", "revenue_growth_yoy", 0.30, "HIGHER_IS_BETTER", "PERCENTILE"),
+  rule("GROWTH", "revenue_growth_yoy", 0.30, "HIGHER_IS_BETTER", "PERCENTILE", 2),
   rule("GROWTH", "revenue_cagr_3y", 0.20, "HIGHER_IS_BETTER", "PERCENTILE", 4),
-  rule("GROWTH", "eps_growth_yoy", 0.20, "HIGHER_IS_BETTER", "PERCENTILE"),
+  rule("GROWTH", "eps_growth_yoy", 0.20, "HIGHER_IS_BETTER", "PERCENTILE", 2),
   rule("GROWTH", "eps_cagr", 0.15, "HIGHER_IS_BETTER", "PERCENTILE", 4),
   rule("GROWTH", "growth_acceleration", 0.15, "HIGHER_IS_BETTER", "TREND", 3),
 

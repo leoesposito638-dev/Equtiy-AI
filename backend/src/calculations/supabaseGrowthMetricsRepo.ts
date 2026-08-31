@@ -20,6 +20,7 @@ import {
   calculateGrowthAcceleration,
   type GrowthMetricResult,
 } from "./growthMetrics";
+import { computeBackfillCandidates, filterAlreadyStored, type BackfillCandidate } from "./growthMetricsBackfill";
 
 interface AnnualPeriodRow {
   id: string;
@@ -51,6 +52,45 @@ async function getAnnualPeriods(companyId: string, metricName: string, count: nu
   }));
   while (rows.length < count) rows.push({ id: "", periodEnd: "", value: null });
   return rows;
+}
+
+/** Reads ALL ANNUAL financial_metrics rows for one metric, most-recent-first,
+ *  no fixed-count padding — used by backfill, which needs to see every real
+ *  period that exists (not just the fixed 4-window the current-period
+ *  calculation uses). */
+async function getAllAnnualPeriods(companyId: string, metricName: string): Promise<AnnualPeriodRow[]> {
+  const db = getDbClient();
+  const { data, error } = await db
+    .from("financial_metrics")
+    .select("id, period_end, value")
+    .eq("company_id", companyId)
+    .eq("metric_name", metricName)
+    .eq("period_type", "ANNUAL")
+    .order("period_end", { ascending: false })
+    .limit(50);
+
+  if (error) throw new Error(`financial_metrics lookup failed for ${metricName}: ${error.message}`);
+  return (data ?? []).map((r: { id: string; period_end: string; value: number | null }) => ({
+    id: r.id,
+    periodEnd: r.period_end,
+    value: r.value,
+  }));
+}
+
+/** Existing (metric_name, period_end) keys already in calculated_metrics for
+ *  this company, at the current CALCULATION_VERSION — the app-level
+ *  duplicate-safety check backfill uses before attempting any insert, same
+ *  defense-in-depth pattern as ingestion's getExistingObservationKeys(). */
+async function getExistingCalculatedMetricKeys(companyId: string): Promise<Set<string>> {
+  const db = getDbClient();
+  const { data, error } = await db
+    .from("calculated_metrics")
+    .select("metric_name, period_end")
+    .eq("company_id", companyId)
+    .eq("period_type", "ANNUAL")
+    .eq("calculation_version", CALCULATION_VERSION);
+  if (error) throw new Error(`calculated_metrics existing-keys query failed: ${error.message}`);
+  return new Set((data ?? []).map((r: { metric_name: string; period_end: string }) => `${r.metric_name}|${r.period_end}`));
 }
 
 function inputHash(rows: AnnualPeriodRow[]): string {
@@ -134,6 +174,56 @@ export async function calculateAndStoreGrowthMetrics(companyId: string): Promise
       outcomes.push({ metricName: c.metricName, result: c.result, stored: { id: stored.id, periodEnd: currentPeriodEnd } });
     } catch (e) {
       outcomes.push({ metricName: c.metricName, result: c.result, storeError: (e as Error).message });
+    }
+  }
+  return outcomes;
+}
+
+export interface BackfillOutcome {
+  candidate: BackfillCandidate;
+  stored?: { id: string };
+  skippedReason?: "already_exists" | string;
+}
+
+/**
+ * Milestone 4A backfill: computes every additional past period_end at which
+ * a GROWTH metric can be LEGITIMATELY derived from real financial_metrics
+ * history (see growthMetricsBackfill.ts — nothing here invents a period or
+ * a value), skips anything already stored (duplicate-safe, idempotent —
+ * running this twice inserts nothing new the second time), and writes the
+ * rest. Does not touch the metric already written by
+ * calculateAndStoreGrowthMetrics() for the most recent period — that one is
+ * naturally skipped too, via the same existing-keys check.
+ */
+export async function backfillGrowthMetrics(companyId: string): Promise<BackfillOutcome[]> {
+  const [revenueRows, epsRows, existingKeys] = await Promise.all([
+    getAllAnnualPeriods(companyId, "revenue"),
+    getAllAnnualPeriods(companyId, "eps"),
+    getExistingCalculatedMetricKeys(companyId),
+  ]);
+
+  const valueById = new Map<string, number | null>();
+  for (const r of [...revenueRows, ...epsRows]) valueById.set(r.id, r.value);
+
+  const candidates = computeBackfillCandidates(revenueRows, epsRows);
+  const toInsert = filterAlreadyStored(candidates, existingKeys);
+  const skippedAsExisting = candidates.filter((c) => !toInsert.includes(c));
+
+  const outcomes: BackfillOutcome[] = skippedAsExisting.map((candidate) => ({ candidate, skippedReason: "already_exists" as const }));
+
+  for (const candidate of toInsert) {
+    const hashRows = candidate.sourceObservationIds.map((id) => ({ id, periodEnd: "", value: valueById.get(id) ?? null }));
+    try {
+      const stored = await insertCalculatedMetric({
+        companyId,
+        metricName: candidate.metricName,
+        value: candidate.value,
+        periodEnd: candidate.periodEnd,
+        inputDataHash: inputHash(hashRows),
+      });
+      outcomes.push({ candidate, stored: { id: stored.id } });
+    } catch (e) {
+      outcomes.push({ candidate, skippedReason: (e as Error).message });
     }
   }
   return outcomes;
