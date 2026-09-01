@@ -1,10 +1,11 @@
 import React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ChevronLeft, FileText, Info, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
-import { useCompanies, useCompanyAnalysis, useCompanyChanges, useCompanyFinancials, useCompanyMetrics, useCompanyScores } from "../lib/useApi";
+import { useCompanies, useCompanyAnalysis, useCompanyChanges, useCompanyFinancials, useCompanyMetrics, useCompanyScores, useCompanyValuation } from "../lib/useApi";
 import { useFollowed } from "../lib/followedContext";
 import { primaryScore } from "../lib/primaryScore";
 import { latestGrowthMetrics } from "../lib/growthMetrics";
+import { latestValuationMetrics } from "../lib/valuationMetrics";
 import { Card, CategoryBar, ConfidenceBadge, ChangeTag, ScoreGauge, SectionLabel, StatusBadge } from "../components/Primitives";
 import { DataUnavailable, ErrorBlock, LoadingBlock } from "../components/States";
 import { C, CATEGORY_ORDER, severityColor, severityFromImportance } from "../styles/tokens";
@@ -54,6 +55,7 @@ export default function CompanyPage() {
   const { data: scores, loading: scoresLoading, error: scoresError } = useCompanyScores(id);
   const { data: financials, loading: finLoading } = useCompanyFinancials(id);
   const { data: metrics } = useCompanyMetrics(id);
+  const { data: valuation } = useCompanyValuation(id);
   const { data: analysis, loading: analysisLoading } = useCompanyAnalysis(id);
   const { data: changes } = useCompanyChanges(id);
 
@@ -67,6 +69,7 @@ export default function CompanyPage() {
   const categories = scores?.categories ?? [];
   const headline = primaryScore(scores);
   const growthMetrics = latestGrowthMetrics(metrics ?? []);
+  const valuationMetrics = latestValuationMetrics(valuation ?? []);
   const thesis = analysis?.thesis;
   const isFollowed = followed.has(id);
 
@@ -163,7 +166,7 @@ export default function CompanyPage() {
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 20 }}>
             {financials.map((f) => (
-              <div key={f.metric_name}>
+              <div key={`${f.metric_name}-${f.period_end}`}>
                 <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}>{f.metric_name.replace(/_/g, " ")}</div>
                 <div style={{ fontSize: 22, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>
                   {f.value != null ? `${f.value}${f.unit === "%" ? "%" : ""}` : <DataUnavailable />}
@@ -175,6 +178,24 @@ export default function CompanyPage() {
             ))}
           </div>
         )}
+      </Card>
+
+      <Card style={{ padding: "22px 24px", marginBottom: 16 }}>
+        <SectionLabel>Valuation</SectionLabel>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 20 }}>
+          {valuationMetrics.map((m) => (
+            <div key={m.metricName}>
+              <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}>{m.label}</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>
+                {m.value != null ? m.value : <DataUnavailable />}
+              </div>
+              {m.periodEnd && <div style={{ fontSize: 11, color: C.textFaint, marginTop: 6 }}>{m.periodEnd}</div>}
+            </div>
+          ))}
+        </div>
+        <p style={{ fontSize: 11, color: C.textFaint, marginTop: 14, marginBottom: 0 }}>
+          Valuation multiples require market-price data the current pipeline does not yet ingest — shown here for when that becomes available, not fabricated in the meantime.
+        </p>
       </Card>
 
       <Card style={{ padding: "22px 24px", marginBottom: 16 }}>
