@@ -13,6 +13,14 @@ import type { PeriodType, FinancialMetric } from "../types/domain";
 import { validateRawLineItem, type ValidationIssue } from "./validators";
 import { normalizeLineItem, type FxRate } from "./normalizers";
 
+/** Thrown by IngestionRepo.insertFinancialMetric when a canonical
+ *  financial_metrics row already exists for this company/metric/period/
+ *  period_type/currency (Milestone 8D Stage 1: a different, lower-or-not-yet-
+ *  prioritized provider already claimed this canonical slot). This is an
+ *  expected, benign outcome — never an uncaught crash — and never triggers a
+ *  retroactive overwrite of the existing canonical value. */
+export class CanonicalAlreadyExistsError extends Error {}
+
 export interface IngestionRepo {
   insertRawFinancialData(params: {
     companyId: string;
@@ -25,6 +33,9 @@ export interface IngestionRepo {
     periodEnd: string;
     periodType: PeriodType;
   }): Promise<void>;
+  /** @throws CanonicalAlreadyExistsError when a canonical row for this
+   *  company/metric/period/period_type/currency already exists from another
+   *  ingestion — the caller treats this as a graceful skip, not a failure. */
   insertFinancialMetric(metric: FinancialMetric): Promise<void>;
   upsertDataSource(source: {
     providerName: string;
@@ -32,7 +43,11 @@ export interface IngestionRepo {
     sourceUrl?: string;
     filingDate?: string;
   }): Promise<string /* data_source_id */>;
-  getExistingObservationKeys(companyId: string, periodType: PeriodType): Promise<Set<string>>;
+  /** Milestone 8D Stage 1: scoped to `providerName` — returns only the
+   *  observation keys already ingested FROM THIS SAME PROVIDER, so a
+   *  different provider's observation for the same metric/period is not
+   *  treated as a duplicate at the raw layer. */
+  getExistingObservationKeys(companyId: string, periodType: PeriodType, providerName: string): Promise<Set<string>>;
   getFxRate(from: string, to: string): Promise<FxRate | undefined>;
 }
 
@@ -40,6 +55,11 @@ export interface IngestionResult {
   companyId: string;
   accepted: number;
   rejected: number;
+  /** Milestone 8D Stage 1: raw observation was stored, but the canonical
+   *  financial_metrics row was NOT written because a canonical value for
+   *  this company/metric/period/period_type/currency already exists from a
+   *  different provider. The existing canonical row is left untouched. */
+  canonicalSkipped: number;
   issues: Array<{ metricName: string; issues: ValidationIssue[] }>;
 }
 
@@ -51,7 +71,7 @@ export async function ingestIncomeStatement(
   provider: FinancialDataProvider,
   repo: IngestionRepo
 ): Promise<IngestionResult> {
-  const result: IngestionResult = { companyId, accepted: 0, rejected: 0, issues: [] };
+  const result: IngestionResult = { companyId, accepted: 0, rejected: 0, canonicalSkipped: 0, issues: [] };
 
   const response = await provider.getIncomeStatement(ref, periodType);
   if (response.status !== "available" || !response.data || !response.source) {
@@ -70,7 +90,9 @@ export async function ingestIncomeStatement(
     filingDate: response.source.filingDate,
   });
 
-  const existingKeys = await repo.getExistingObservationKeys(companyId, periodType);
+  // Milestone 8D Stage 1: scoped to THIS provider only — a different
+  // provider's observation for the same metric/period is not a duplicate.
+  const existingKeys = await repo.getExistingObservationKeys(companyId, periodType, response.source.providerName);
 
   for (const item of response.data) {
     const validation = validateRawLineItem(item, existingKeys);
@@ -103,8 +125,28 @@ export async function ingestIncomeStatement(
       continue;
     }
 
-    await repo.insertFinancialMetric(metric);
-    result.accepted++;
+    try {
+      await repo.insertFinancialMetric(metric);
+      result.accepted++;
+    } catch (e) {
+      if (e instanceof CanonicalAlreadyExistsError) {
+        // Milestone 8D Stage 1: the raw observation above is already safely
+        // stored. No retroactive promotion/overwrite of the existing
+        // canonical value — that is explicitly out of scope for Stage 1.
+        result.canonicalSkipped++;
+        result.issues.push({
+          metricName: item.metricName,
+          issues: [
+            {
+              code: "CANONICAL_ALREADY_EXISTS",
+              message: `${item.metricName} for ${item.periodEnd} (${item.periodType}): raw observation stored from ${response.source.providerName}, but a canonical financial_metrics row already exists from a different provider — left untouched (no Stage 2 conflict resolution yet).`,
+            },
+          ],
+        });
+        continue;
+      }
+      throw e;
+    }
   }
 
   return result;

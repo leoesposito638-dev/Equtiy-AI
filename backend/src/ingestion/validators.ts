@@ -15,7 +15,8 @@ export interface ValidationIssue {
     | "IMPOSSIBLE_VALUE"
     | "PERIOD_TYPE_MISMATCH"
     | "STALE_FILING_DATE"
-    | "DUPLICATE_OBSERVATION";
+    | "DUPLICATE_OBSERVATION"
+    | "CANONICAL_ALREADY_EXISTS";
   message: string;
 }
 
@@ -43,6 +44,15 @@ const CAN_BE_NEGATIVE = new Set([
   "return_12m",
 ]);
 
+/**
+ * `existingObservationKeys` must be scoped to the SAME provider as `item`
+ * (Milestone 8D Stage 1) — the caller (ingest.ts, via
+ * IngestionRepo.getExistingObservationKeys) is responsible for that scoping.
+ * This function's own dedupe-key format is unchanged: a different provider's
+ * observation for the same metric/period is a duplicate only if it's present
+ * in the (already provider-scoped) set passed in, so the same fact from a
+ * different provider correctly passes raw-layer validation.
+ */
 export function validateRawLineItem(
   item: RawLineItem,
   existingObservationKeys: Set<string>

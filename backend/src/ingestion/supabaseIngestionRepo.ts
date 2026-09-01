@@ -8,7 +8,7 @@
 // ============================================================================
 
 import { getDbClient } from "../db/client";
-import type { IngestionRepo } from "./ingest";
+import { CanonicalAlreadyExistsError, type IngestionRepo } from "./ingest";
 import type { PeriodType, FinancialMetric } from "../types/domain";
 import type { FxRate } from "./normalizers";
 
@@ -56,7 +56,13 @@ export function buildSupabaseIngestionRepo(): IngestionRepo {
       });
       if (error) {
         if (error.code === "23505") {
-          throw new Error(`financial_metrics: a row for this company/metric/period/period_type/currency already exists (unique constraint uq_financial_metrics): ${error.message}`);
+          // Milestone 8D Stage 1: a canonical row for this company/metric/
+          // period/period_type/currency already exists — from another
+          // provider's earlier ingestion, most likely. This is an expected,
+          // graceful outcome (ingest.ts catches it and skips), never a crash.
+          throw new CanonicalAlreadyExistsError(
+            `financial_metrics: a row for this company/metric/period/period_type/currency already exists (unique constraint uq_financial_metrics): ${error.message}`
+          );
         }
         throw new Error(`financial_metrics insert failed: ${error.message}`);
       }
@@ -86,12 +92,18 @@ export function buildSupabaseIngestionRepo(): IngestionRepo {
       return data.id as string;
     },
 
-    async getExistingObservationKeys(companyId: string, periodType: PeriodType) {
+    async getExistingObservationKeys(companyId: string, periodType: PeriodType, providerName: string) {
+      // Milestone 8D Stage 1: scoped to `providerName` via the existing
+      // raw_financial_data.data_source_id -> data_sources relationship — no
+      // schema change. A different provider's observation for the same
+      // metric/period is therefore NOT in this set, so it is not treated as
+      // a duplicate at the raw layer (see validators.ts / ingest.ts).
       const { data, error } = await db
         .from("raw_financial_data")
-        .select("metric_name, period_end, period_type")
+        .select("metric_name, period_end, period_type, data_sources!inner(provider_name)")
         .eq("company_id", companyId)
-        .eq("period_type", periodType);
+        .eq("period_type", periodType)
+        .eq("data_sources.provider_name", providerName);
 
       if (error) throw new Error(`getExistingObservationKeys query failed: ${error.message}`);
 
