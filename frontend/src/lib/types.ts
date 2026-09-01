@@ -134,9 +134,13 @@ export interface AlertRow {
   companies: { name: string; ticker: string };
 }
 
+/** GET /watchlists rows embed their membership via the same join pattern
+ * CategoryScoreRow uses for score_categories — present only on the GET
+ * response, not on POST /watchlists's plain-insert response. */
 export interface Watchlist {
   id: string;
   user_id: string;
   name: string;
   created_at: string;
+  watchlist_companies?: { company_id: string }[];
 }

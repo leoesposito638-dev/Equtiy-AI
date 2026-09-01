@@ -8,10 +8,10 @@ import { EmptyBlock, ErrorBlock, LoadingBlock } from "../components/States";
 
 export default function MyCompaniesPage() {
   const { data: companies, loading, error } = useCompanies();
-  const { followed, toggle } = useFollowed();
+  const { followed, loading: followedLoading, toggle } = useFollowed();
   const navigate = useNavigate();
 
-  if (loading) return <LoadingBlock label="Loading companies…" />;
+  if (loading || followedLoading) return <LoadingBlock label="Loading companies…" />;
   if (error) return <ErrorBlock message={error} />;
   if (!companies) return null;
 

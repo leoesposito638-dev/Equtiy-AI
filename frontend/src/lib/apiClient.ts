@@ -52,6 +52,7 @@ export const api = {
   getCompanyChanges: (id: string) => request<ChangeEventRow[]>(`/companies/${id}/changes`),
   search: (q: string) => request<Company[]>(`/search?q=${encodeURIComponent(q)}`),
 
+  listWatchlists: () => request<Watchlist[]>("/watchlists"),
   createWatchlist: (name: string) =>
     request<Watchlist>("/watchlists", { method: "POST", body: JSON.stringify({ name }) }),
   addToWatchlist: (watchlistId: string, companyId: string) =>

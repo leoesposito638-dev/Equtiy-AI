@@ -1,4 +1,5 @@
 // ============================================================================
+// GET /watchlists
 // POST /watchlists
 // POST /watchlists/:id/companies
 // DELETE /watchlists/:id/companies/:companyId
@@ -9,6 +10,21 @@ import { getDbClient } from "../../db/client";
 import { requireUser } from "../auth";
 
 const router = Router();
+
+// Added for Milestone 11D: without this, nothing could ever read watchlist
+// state back — POST/DELETE existed with no way to load membership on mount
+// or after a refresh. Same embedded-join pattern companies.ts already uses
+// for /:id/scores (`.select("*, score_categories(...)")`).
+router.get("/", requireUser, async (req, res) => {
+  const db = getDbClient();
+  const { data, error } = await db
+    .from("watchlists")
+    .select("*, watchlist_companies(company_id)")
+    .eq("user_id", req.userId)
+    .order("created_at", { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ data });
+});
 
 router.post("/", requireUser, async (req, res) => {
   const db = getDbClient();

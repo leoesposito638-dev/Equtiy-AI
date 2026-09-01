@@ -5,21 +5,16 @@
 // ============================================================================
 
 import React, { createContext, useContext } from "react";
-import { useFollowedSet } from "./useApi";
+import { useFollowedSet, type FollowedState } from "./useApi";
 
-interface FollowedContextValue {
-  followed: Set<string>;
-  toggle: (id: string) => void;
-}
-
-const FollowedContext = createContext<FollowedContextValue | null>(null);
+const FollowedContext = createContext<FollowedState | null>(null);
 
 export function FollowedProvider({ children }: { children: React.ReactNode }) {
-  const [followed, toggle] = useFollowedSet();
-  return <FollowedContext.Provider value={{ followed, toggle }}>{children}</FollowedContext.Provider>;
+  const state = useFollowedSet();
+  return <FollowedContext.Provider value={state}>{children}</FollowedContext.Provider>;
 }
 
-export function useFollowed(): FollowedContextValue {
+export function useFollowed(): FollowedState {
   const ctx = useContext(FollowedContext);
   if (!ctx) throw new Error("useFollowed must be used within a FollowedProvider");
   return ctx;

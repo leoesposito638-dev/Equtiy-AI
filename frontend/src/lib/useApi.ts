@@ -9,10 +9,11 @@
 // real problems.
 // ============================================================================
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DEMO_MODE } from "./config";
 import { api, ApiError } from "./apiClient";
 import { filterToDemoUniverse } from "./demoUniverse";
+import { followedFromWatchlists } from "./watchlistState";
 import {
   FIXTURE_ALERTS, FIXTURE_ANALYSIS, FIXTURE_CHANGES, FIXTURE_COMPANIES,
   FIXTURE_FINANCIALS, FIXTURE_FOLLOWED, FIXTURE_SCORES, FIXTURE_VALUATION,
@@ -99,22 +100,82 @@ export function useAlerts(): AsyncState<AlertRow[]> {
   return useAsync(api.listAlerts, FIXTURE_ALERTS, []);
 }
 
-/** Followed-company membership isn't a real endpoint response on its own in
- * the backend (it comes from watchlist_companies via a watchlist id this
- * demo doesn't have yet) — in demo mode we track it locally; in live mode
- * this should be replaced with a real watchlist id resolved via
- * POST /watchlists (see api.createWatchlist) the first time a user follows
- * a company, then persisted membership from that watchlist's companies. */
-export function useFollowedSet(): [Set<string>, (id: string) => void] {
+export interface FollowedState {
+  followed: Set<string>;
+  loading: boolean;
+  toggle: (id: string) => void;
+}
+
+/** Real-mode: membership comes from GET /watchlists (watchlist_companies,
+ * joined) on mount, and every Follow/Unfollow persists via
+ * POST/DELETE /watchlists/:id/companies — this demo user's watchlist is
+ * created lazily (api.createWatchlist) the first time they follow anything,
+ * not eagerly on load. Demo mode is unchanged: pure local fixture state. */
+export function useFollowedSet(): FollowedState {
   const [followed, setFollowed] = useState<Set<string>>(() => new Set(DEMO_MODE ? FIXTURE_FOLLOWED : []));
+  const [loading, setLoading] = useState(!DEMO_MODE);
+  const watchlistId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (DEMO_MODE) return;
+    let cancelled = false;
+    api
+      .listWatchlists()
+      .then((watchlists) => {
+        if (cancelled) return;
+        const { watchlistId: id, followed: ids } = followedFromWatchlists(watchlists);
+        watchlistId.current = id;
+        setFollowed(ids);
+        setLoading(false);
+      })
+      .catch(() => {
+        // Real failure — leave followed empty rather than fabricating
+        // membership; loading still clears so the app doesn't hang.
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const toggle = (id: string) => {
+    if (DEMO_MODE) {
+      setFollowed((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+      });
+      return;
+    }
+
+    const wasFollowed = followed.has(id);
     setFollowed((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (wasFollowed) next.delete(id); else next.add(id);
       return next;
     });
-    // TODO(production): call api.addToWatchlist / api.removeFromWatchlist here
-    // against the user's real watchlist id once watchlist bootstrap exists.
+
+    (async () => {
+      try {
+        if (wasFollowed) {
+          if (!watchlistId.current) return; // nothing persisted yet, nothing to remove
+          await api.removeFromWatchlist(watchlistId.current, id);
+        } else {
+          if (!watchlistId.current) {
+            const created = await api.createWatchlist("My Companies");
+            watchlistId.current = created.id;
+          }
+          await api.addToWatchlist(watchlistId.current, id);
+        }
+      } catch {
+        // Revert the optimistic change on failure — never leave local state
+        // claiming a persistence that didn't actually happen.
+        setFollowed((prev) => {
+          const next = new Set(prev);
+          if (wasFollowed) next.add(id); else next.delete(id);
+          return next;
+        });
+      }
+    })();
   };
-  return [followed, toggle];
+
+  return { followed, loading, toggle };
 }
