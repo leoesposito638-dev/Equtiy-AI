@@ -15,17 +15,36 @@
 
 import { getDbClient } from "../db/client";
 import type { ScoringRepo } from "./scoringEngine";
-import type { FundamentalScore } from "../types/domain";
+import type { FundamentalScore, MetricBenchmark } from "../types/domain";
 import type { MetricInput } from "./categoryScorers/types";
+import { resolveBenchmarkTier } from "./benchmarkResolver";
 import {
   buildMetricInput,
-  buildBenchmarkMap,
   mapScoreCategoryRow,
   mapScoreRuleRow,
   type DbScoreCategoryRow,
   type DbScoreRuleRow,
   type DbMetricBenchmarkRow,
 } from "./scoringRepoHelpers";
+
+/** Shapes one metric_benchmarks row into the MetricBenchmark shape resolver/
+ *  scoring code expects — the same field mapping scoringRepoHelpers.ts's
+ *  buildBenchmarkMap uses per-row, just applied to a single row at a time
+ *  here since getBenchmarks (below) must resolve SECTOR vs MARKET_WIDE per
+ *  metric via the existing resolveBenchmarkTier(), not just collect rows. */
+function toMetricBenchmark(row: DbMetricBenchmarkRow): MetricBenchmark {
+  return {
+    metricName: row.metric_name,
+    sector: row.sector ?? undefined,
+    industry: row.industry ?? undefined,
+    periodEnd: row.period_end,
+    p25: row.p25,
+    median: row.median,
+    p75: row.p75,
+    p90: row.p90,
+    sampleSize: row.sample_size,
+  };
+}
 
 /** How many past ANNUAL calculated_metrics periods to load per metric.
  *  Generous relative to the largest minimum_data_points (4) so nothing
@@ -74,14 +93,36 @@ export function buildSupabaseScoringRepo(): ScoringRepo {
     },
 
     async getBenchmarks(companySector: string | undefined, metricNames: string[]) {
-      if (!companySector || metricNames.length === 0) return new Map();
-      const { data, error } = await db
-        .from("metric_benchmarks")
-        .select("*")
-        .in("metric_name", metricNames)
-        .eq("sector", companySector);
-      if (error) throw new Error(`metric_benchmarks query failed: ${error.message}`);
-      return buildBenchmarkMap((data ?? []) as DbMetricBenchmarkRow[], metricNames);
+      if (metricNames.length === 0) return new Map();
+
+      // Fetch BOTH candidate tiers — a plain .eq("sector", companySector)
+      // can never match a MARKET_WIDE row (sector IS NULL is never equal to
+      // a non-null value in Postgres), which is exactly the bug this fixes.
+      const [sectorResult, marketWideResult] = await Promise.all([
+        companySector
+          ? db.from("metric_benchmarks").select("*").in("metric_name", metricNames).eq("sector", companySector)
+          : Promise.resolve({ data: [] as DbMetricBenchmarkRow[], error: null }),
+        db.from("metric_benchmarks").select("*").in("metric_name", metricNames).is("sector", null),
+      ]);
+      if (sectorResult.error) throw new Error(`metric_benchmarks sector query failed: ${sectorResult.error.message}`);
+      if (marketWideResult.error) throw new Error(`metric_benchmarks market-wide query failed: ${marketWideResult.error.message}`);
+
+      const sectorRowByMetric = new Map(((sectorResult.data ?? []) as DbMetricBenchmarkRow[]).map((r) => [r.metric_name, r]));
+      const marketWideRowByMetric = new Map(((marketWideResult.data ?? []) as DbMetricBenchmarkRow[]).map((r) => [r.metric_name, r]));
+
+      const map = new Map<string, MetricBenchmark>();
+      for (const metricName of metricNames) {
+        const sectorRow = sectorRowByMetric.get(metricName);
+        const marketWideRow = marketWideRowByMetric.get(metricName);
+        // Existing, already-tested tier resolution (benchmarkResolver.ts) —
+        // SECTOR first, MARKET_WIDE fallback, no row if neither exists.
+        const resolved = resolveBenchmarkTier(
+          sectorRow ? toMetricBenchmark(sectorRow) : null,
+          marketWideRow ? toMetricBenchmark(marketWideRow) : null
+        );
+        if (resolved.benchmark) map.set(metricName, resolved.benchmark);
+      }
+      return map;
     },
 
     async getCompanySector(companyId: string) {
