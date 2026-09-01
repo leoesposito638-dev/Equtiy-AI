@@ -8,20 +8,27 @@
 // ============================================================================
 
 import { describe, it, expect } from "vitest";
-import { ingestIncomeStatement, CanonicalAlreadyExistsError, type IngestionRepo } from "../src/ingestion/ingest";
+import { ingestIncomeStatement, ingestBalanceSheet, ingestCashFlow, CanonicalAlreadyExistsError, type IngestionRepo } from "../src/ingestion/ingest";
 import type { FinancialDataProvider, ProviderCompanyRef, RawLineItem } from "../src/providers/interfaces";
 import type { PeriodType } from "../src/types/domain";
 import type { FxRate } from "../src/ingestion/normalizers";
 
-function fakeProvider(providerName: string, providerType: "SEC" | "FINANCIAL_API", data: RawLineItem[]): FinancialDataProvider {
+function fakeProvider(
+  providerName: string,
+  providerType: "SEC" | "FINANCIAL_API",
+  data: RawLineItem[],
+  extra?: { balanceSheet?: RawLineItem[]; cashFlow?: RawLineItem[] }
+): FinancialDataProvider {
   return {
     async getIncomeStatement() {
       return { status: "available", data, source: { providerName, providerType } };
     },
     async getBalanceSheet() {
+      if (extra?.balanceSheet) return { status: "available", data: extra.balanceSheet, source: { providerName, providerType } };
       return { status: "unavailable", data: null, source: null, unavailableReason: "not implemented" };
     },
     async getCashFlow() {
+      if (extra?.cashFlow) return { status: "available", data: extra.cashFlow, source: { providerName, providerType } };
       return { status: "unavailable", data: null, source: null, unavailableReason: "not implemented" };
     },
   };
@@ -153,5 +160,49 @@ describe("ingestIncomeStatement — different-provider same-period (Milestone 8D
     // revenue: canonical conflict (skipped); net_income: brand new, accepted.
     expect(result.canonicalSkipped).toBe(1);
     expect(result.accepted).toBe(1);
+  });
+});
+
+describe("ingestBalanceSheet / ingestCashFlow (Milestone 12B) — same shared flow as ingestIncomeStatement", () => {
+  it("ingestBalanceSheet calls provider.getBalanceSheet, not getIncomeStatement", async () => {
+    const { repo } = fakeRepo();
+    const provider = fakeProvider("SEC EDGAR", "SEC", [], {
+      balanceSheet: [item({ metricName: "cash", periodType: "INSTANT" }), item({ metricName: "total_assets", periodType: "INSTANT" })],
+    });
+    const result = await ingestBalanceSheet("company-1", REF, "USD", "ANNUAL", provider, repo);
+    expect(result.accepted).toBe(2);
+    expect(result.rejected).toBe(0);
+  });
+
+  it("ingestCashFlow calls provider.getCashFlow, not getIncomeStatement", async () => {
+    const { repo } = fakeRepo();
+    const provider = fakeProvider("SEC EDGAR", "SEC", [], {
+      cashFlow: [item({ metricName: "operating_cash_flow" }), item({ metricName: "capex" })],
+    });
+    const result = await ingestCashFlow("company-1", REF, "USD", "ANNUAL", provider, repo);
+    expect(result.accepted).toBe(2);
+    expect(result.rejected).toBe(0);
+  });
+
+  it("ingestBalanceSheet and ingestIncomeStatement write into the same canonical/raw layers — a balance-sheet metric name never collides with an income-statement one, and provider-scoped dedupe still applies per statement's own periodType", async () => {
+    const { repo } = fakeRepo();
+    const incomeProvider = fakeProvider("SEC EDGAR", "SEC", [item({ metricName: "revenue" })]);
+    await ingestIncomeStatement("company-1", REF, "USD", "ANNUAL", incomeProvider, repo);
+
+    const balanceProvider = fakeProvider("SEC EDGAR", "SEC", [], {
+      balanceSheet: [item({ metricName: "cash", periodType: "INSTANT" })],
+    });
+    const result = await ingestBalanceSheet("company-1", REF, "USD", "ANNUAL", balanceProvider, repo);
+    expect(result.accepted).toBe(1); // cash accepted independently, revenue's prior ingestion untouched
+    expect(result.canonicalSkipped).toBe(0);
+  });
+
+  it("an unavailable getBalanceSheet response ingests nothing and reports it honestly, never fabricating rows", async () => {
+    const { repo } = fakeRepo();
+    const provider = fakeProvider("SEC EDGAR", "SEC", []); // no balanceSheet override -> unavailable
+    const result = await ingestBalanceSheet("company-1", REF, "USD", "ANNUAL", provider, repo);
+    expect(result.accepted).toBe(0);
+    expect(result.rejected).toBe(0);
+    expect(result.issues[0]?.issues[0]?.message).toContain("not implemented");
   });
 });

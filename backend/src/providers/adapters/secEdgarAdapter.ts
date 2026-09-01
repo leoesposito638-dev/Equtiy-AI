@@ -72,6 +72,75 @@ const REVENUE_CONCEPTS = ["Revenues", "RevenueFromContractWithCustomerExcludingA
 const NET_INCOME_CONCEPTS = ["NetIncomeLoss", "ProfitLoss"];
 const EPS_CONCEPT = "EarningsPerShareBasic";
 
+// ----------------------------------------------------------------------------
+// Milestone 12B — additional income-statement, balance-sheet, and cash-flow
+// concepts. Every candidate list below was verified empirically (read-only,
+// against real SEC data) across a sector-diverse sample of the 30-company
+// demo universe before being written here — never assumed from general XBRL
+// knowledge alone. Same "evaluate all candidates, most current wins"
+// principle throughout; a metric legitimately missing for a company (e.g.
+// gross_profit for a bank, R&D for a restaurant chain) is honestly absent,
+// not an error to work around.
+// ----------------------------------------------------------------------------
+
+/** Duration (income-statement) facts. */
+const GROSS_PROFIT_CONCEPTS = ["GrossProfit"];
+const OPERATING_INCOME_CONCEPTS = ["OperatingIncomeLoss"];
+/** InterestExpenseDebt rescues CVX, whose InterestExpense tag has no
+ *  genuinely-annual facts — confirmed empirically, same fallback pattern as
+ *  revenue/net income. */
+const INTEREST_EXPENSE_CONCEPTS = ["InterestExpense", "InterestExpenseDebt"];
+const RD_EXPENSE_CONCEPTS = ["ResearchAndDevelopmentExpense"];
+
+/** Duration (cash-flow-statement) facts. EBITDA is NOT a standard GAAP XBRL
+ *  concept (no company tags "EBITDA" directly) — it is calculated
+ *  (operating_income + depreciation_amortization) at the calculation layer,
+ *  never fetched as a raw fact; depreciation_amortization is fetched here
+ *  because it is structurally a cash-flow-statement line (the non-cash
+ *  add-back in the operating-activities reconciliation), confirmed
+ *  empirically for all 8 sample companies. */
+const OPERATING_CASH_FLOW_CONCEPTS = ["NetCashProvidedByUsedInOperatingActivities"];
+/** PaymentsToAcquireProductiveAssets rescues NVDA (whose
+ *  PaymentsToAcquirePropertyPlantAndEquipment tag has been stale since FY2012
+ *  — confirmed empirically) and CVX; same fallback pattern as revenue/net
+ *  income. JPM has neither concept — a bank genuinely has no traditional
+ *  capex line, confirmed empirically, not an error. */
+const CAPEX_CONCEPTS = ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"];
+const DEPRECIATION_AMORTIZATION_CONCEPTS = [
+  "DepreciationDepletionAndAmortization",
+  "DepreciationAmortizationAndAccretionNet",
+  "DepreciationAndAmortization",
+];
+
+/** Instant (balance-sheet) facts — point-in-time, NOT duration facts: they
+ *  have no `start`, only `end` (see isGenuinelyAnnualSpan's doc comment —
+ *  the day-span check does not and must not apply to these; see
+ *  fetchInstantConcept below, which reuses the same form/fp/restatement-dedup
+ *  logic as fetchAnnualConcept but correctly omits the span check). */
+const CASH_CONCEPTS = ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"];
+const TOTAL_ASSETS_CONCEPTS = ["Assets"];
+const TOTAL_LIABILITIES_CONCEPTS = ["Liabilities"];
+/** StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest
+ *  rescues JNJ/CAT/PG, who tag only that concept, not plain
+ *  StockholdersEquity — confirmed empirically. */
+const EQUITY_CONCEPTS = ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"];
+const CURRENT_ASSETS_CONCEPTS = ["AssetsCurrent"];
+const CURRENT_LIABILITIES_CONCEPTS = ["LiabilitiesCurrent"];
+// NOTE: shares_outstanding (needed for share_count_trend/share_dilution_trend)
+// was investigated and NOT implemented — see file-level STOP note below
+// fetchMostCurrentInstantConcept. us-gaap:CommonStockSharesOutstanding was
+// verified empirically present for only 3 of 8 sampled companies (NVDA, JPM,
+// CAT); most large-cap filers disclose share count via the `dei` taxonomy's
+// cover-page tag instead, a materially different namespace/mechanism this
+// adapter does not use — per Milestone 12B Phase 6, documenting this rather
+// than inventing a partial/unreliable solution.
+// NOTE: total_debt / net_debt were investigated and NOT implemented — there
+// is no single standard XBRL concept for "total debt" (companies decompose
+// it across LongTermDebtNoncurrent/LongTermDebtCurrent/ShortTermBorrowings/
+// finance leases inconsistently); summing an arbitrary subset would invent a
+// debt-aggregation methodology not present anywhere in this repository. See
+// the Milestone 12B report for the full reasoning.
+
 /** A genuinely annual fact's start/end span should be about one year.
  *  Milestone 9D: SEC facts carrying form="10-K" && fp="FY" are NOT
  *  sufficient on their own to guarantee an annual span — a 10-K can
@@ -267,6 +336,73 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     return this.fetchMostCurrentAnnualConcept(cik, NET_INCOME_CONCEPTS, "USD");
   }
 
+  /** Milestone 12B — instant (point-in-time) counterpart to
+   *  fetchAnnualConcept, for balance-sheet facts. SEC XBRL instant facts
+   *  (Assets, Liabilities, StockholdersEquity, Cash, ...) carry only `end`,
+   *  never `start` — isGenuinelyAnnualSpan's day-span check is meaningless
+   *  for them and must not be applied (it would reject every real fact, since
+   *  it requires a start date). Everything else — form=10-K/fp=FY filtering,
+   *  most-recently-filed-wins restatement dedup — is identical to
+   *  fetchAnnualConcept, reused exactly, not reimplemented differently. */
+  private async fetchInstantConcept(
+    cik: string,
+    concept: string,
+    unitsKey: "USD" | "shares"
+  ): Promise<{ ok: true; factsByPeriodEnd: Map<string, SecFact> } | { ok: false; reason: string }> {
+    const url = `${SEC_DATA_BASE_URL}/CIK${cik}/us-gaap/${concept}.json`;
+    const result = await this.fetchJson(url);
+    if (!result.ok) return { ok: false, reason: result.reason };
+
+    const body = result.body as SecConceptResponse;
+    const facts = body.units?.[unitsKey];
+    if (!Array.isArray(facts) || facts.length === 0) {
+      return { ok: false, reason: `SEC concept us-gaap:${concept} has no '${unitsKey}' facts (from ${url}).` };
+    }
+
+    const annualFacts = facts.filter((f) => f.form === "10-K" && f.fp === "FY" && typeof f.val === "number" && !Number.isNaN(f.val));
+    if (annualFacts.length === 0) {
+      return { ok: false, reason: `SEC concept us-gaap:${concept} has no genuinely annual (10-K, FY) instant facts (from ${url}).` };
+    }
+
+    const factsByPeriodEnd = new Map<string, SecFact>();
+    for (const fact of annualFacts) {
+      const existing = factsByPeriodEnd.get(fact.end);
+      if (!existing || fact.filed > existing.filed) {
+        factsByPeriodEnd.set(fact.end, fact); // most-recently-filed wins, restatements included
+      }
+    }
+    return { ok: true, factsByPeriodEnd };
+  }
+
+  /** Instant-fact counterpart to fetchMostCurrentAnnualConcept — same
+   *  "evaluate every candidate, most current series wins" principle. */
+  private async fetchMostCurrentInstantConcept(
+    cik: string,
+    concepts: string[],
+    unitsKey: "USD" | "shares"
+  ): Promise<{ ok: true; concept: string; factsByPeriodEnd: Map<string, SecFact> } | { ok: false; reason: string }> {
+    const reasons: string[] = [];
+    const candidates: Array<{ concept: string; factsByPeriodEnd: Map<string, SecFact>; latestPeriodEnd: string }> = [];
+
+    for (const concept of concepts) {
+      const result = await this.fetchInstantConcept(cik, concept, unitsKey);
+      if (!result.ok) {
+        reasons.push(result.reason);
+        continue;
+      }
+      const latestPeriodEnd = [...result.factsByPeriodEnd.keys()].sort().at(-1)!;
+      candidates.push({ concept, factsByPeriodEnd: result.factsByPeriodEnd, latestPeriodEnd });
+    }
+
+    if (candidates.length === 0) {
+      return { ok: false, reason: reasons.join(" ") };
+    }
+
+    const best = candidates.reduce((a, b) => (b.latestPeriodEnd > a.latestPeriodEnd ? b : a));
+    return { ok: true, concept: best.concept, factsByPeriodEnd: best.factsByPeriodEnd };
+  }
+
+
   async getIncomeStatement(ref: ProviderCompanyRef, periodType: PeriodType): Promise<ProviderResult<RawLineItem[]>> {
     if (periodType !== "ANNUAL") {
       return {
@@ -283,10 +419,14 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     }
     const cik = cikResult.cik;
 
-    const [revenue, netIncome, eps] = await Promise.all([
+    const [revenue, netIncome, eps, grossProfit, operatingIncome, interestExpense, rdExpense] = await Promise.all([
       this.fetchAnnualRevenue(cik),
       this.fetchAnnualNetIncome(cik),
       this.fetchAnnualConcept(cik, EPS_CONCEPT, "USD/shares"),
+      this.fetchMostCurrentAnnualConcept(cik, GROSS_PROFIT_CONCEPTS, "USD"),
+      this.fetchMostCurrentAnnualConcept(cik, OPERATING_INCOME_CONCEPTS, "USD"),
+      this.fetchMostCurrentAnnualConcept(cik, INTEREST_EXPENSE_CONCEPTS, "USD"),
+      this.fetchMostCurrentAnnualConcept(cik, RD_EXPENSE_CONCEPTS, "USD"),
     ]);
 
     const unavailableReasons: string[] = [];
@@ -322,6 +462,13 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     collect("revenue", revenue.ok ? `sec.us-gaap.${revenue.concept}` : "sec.us-gaap.revenue", "USD", revenue);
     collect("net_income", netIncome.ok ? `sec.us-gaap.${netIncome.concept}` : "sec.us-gaap.net_income", "USD", netIncome);
     collect("eps", `sec.us-gaap.${EPS_CONCEPT}`, "USD_PER_SHARE", eps);
+    // Milestone 12B additions — same collect(), same per-metric independence
+    // (a company legitimately missing one of these, e.g. gross_profit for a
+    // bank, still yields line items for the others).
+    collect("gross_profit", grossProfit.ok ? `sec.us-gaap.${grossProfit.concept}` : "sec.us-gaap.gross_profit", "USD", grossProfit);
+    collect("operating_income", operatingIncome.ok ? `sec.us-gaap.${operatingIncome.concept}` : "sec.us-gaap.operating_income", "USD", operatingIncome);
+    collect("interest_expense", interestExpense.ok ? `sec.us-gaap.${interestExpense.concept}` : "sec.us-gaap.interest_expense", "USD", interestExpense);
+    collect("research_development", rdExpense.ok ? `sec.us-gaap.${rdExpense.concept}` : "sec.us-gaap.research_development", "USD", rdExpense);
 
     if (lineItems.length === 0 || !mostRecentFact) {
       return {
@@ -347,21 +494,185 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     };
   }
 
-  async getBalanceSheet(ref: ProviderCompanyRef, _periodType: PeriodType): Promise<ProviderResult<RawLineItem[]>> {
+  /** Milestone 12B. periodType is required "ANNUAL" for consistency with
+   *  getIncomeStatement, even though every fact this method returns is
+   *  tagged periodType "INSTANT" — the requested "ANNUAL" here means "the
+   *  balance sheet as of this company's fiscal year end," not that the facts
+   *  themselves are duration facts (they are not; see the file-level note on
+   *  CASH_CONCEPTS et al.). */
+  async getBalanceSheet(ref: ProviderCompanyRef, periodType: PeriodType): Promise<ProviderResult<RawLineItem[]>> {
+    if (periodType !== "ANNUAL") {
+      return {
+        status: "unavailable",
+        data: null,
+        source: null,
+        unavailableReason: `SecEdgarAdapter does not yet support period_type '${periodType}' for getBalanceSheet — only ANNUAL (form=10-K, fp=FY) is implemented.`,
+      };
+    }
+
+    const cikResult = await this.resolveCik(ref.ticker);
+    if (!cikResult.ok) {
+      return { status: "unavailable", data: null, source: null, unavailableReason: cikResult.reason };
+    }
+    const cik = cikResult.cik;
+
+    const [cash, totalAssets, totalLiabilities, equity, currentAssets, currentLiabilities] = await Promise.all([
+      this.fetchMostCurrentInstantConcept(cik, CASH_CONCEPTS, "USD"),
+      this.fetchMostCurrentInstantConcept(cik, TOTAL_ASSETS_CONCEPTS, "USD"),
+      this.fetchMostCurrentInstantConcept(cik, TOTAL_LIABILITIES_CONCEPTS, "USD"),
+      this.fetchMostCurrentInstantConcept(cik, EQUITY_CONCEPTS, "USD"),
+      this.fetchMostCurrentInstantConcept(cik, CURRENT_ASSETS_CONCEPTS, "USD"),
+      this.fetchMostCurrentInstantConcept(cik, CURRENT_LIABILITIES_CONCEPTS, "USD"),
+    ]);
+
+    const unavailableReasons: string[] = [];
+    const lineItems: RawLineItem[] = [];
+    let mostRecentFact: SecFact | undefined;
+    let mostRecentPeriodEnd: string | undefined;
+
+    const collect = (metricName: string, fallbackIdentifier: string, result: typeof cash) => {
+      if (!result.ok) {
+        unavailableReasons.push(result.reason);
+        return;
+      }
+      const sortedPeriods = [...result.factsByPeriodEnd.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+      for (const [periodEnd, fact] of sortedPeriods.slice(0, LOOKBACK_PERIODS)) {
+        lineItems.push({
+          metricName,
+          metricIdentifier: `sec.us-gaap.${result.concept}`,
+          rawValue: fact.val,
+          unit: "USD",
+          currency: "USD",
+          // No periodStart: these are instant (point-in-time) facts, not
+          // duration facts — there is no meaningful "start" to report.
+          periodEnd,
+          periodType: "INSTANT",
+          filingDate: fact.filed,
+        });
+        if (!mostRecentPeriodEnd || periodEnd > mostRecentPeriodEnd) {
+          mostRecentPeriodEnd = periodEnd;
+          mostRecentFact = fact;
+        }
+      }
+      void fallbackIdentifier; // symmetry with getIncomeStatement's collect(); unreachable when result.ok
+    };
+
+    collect("cash", "sec.us-gaap.cash", cash);
+    collect("total_assets", "sec.us-gaap.total_assets", totalAssets);
+    collect("total_liabilities", "sec.us-gaap.total_liabilities", totalLiabilities);
+    collect("equity", "sec.us-gaap.equity", equity);
+    collect("current_assets", "sec.us-gaap.current_assets", currentAssets);
+    collect("current_liabilities", "sec.us-gaap.current_liabilities", currentLiabilities);
+
+    if (lineItems.length === 0 || !mostRecentFact) {
+      return {
+        status: "unavailable",
+        data: null,
+        source: null,
+        unavailableReason: unavailableReasons.join(" ") || `No usable SEC annual balance-sheet facts found for ${ref.ticker} (CIK ${cik}).`,
+      };
+    }
+
     return {
-      status: "unavailable",
-      data: null,
-      source: null,
-      unavailableReason: `SecEdgarAdapter.getBalanceSheet is not implemented yet for ${ref.ticker} — income-statement (revenue/net_income/eps) is the only statement implemented so far.`,
+      status: "available",
+      data: lineItems,
+      source: {
+        providerName: "SEC EDGAR",
+        providerType: "SEC",
+        sourceUrl: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${cik}&type=10-K`,
+        sourceDocumentId: mostRecentFact.accn,
+        filingDate: mostRecentFact.filed,
+        reportingPeriodEnd: mostRecentPeriodEnd,
+        currency: "USD",
+      },
     };
   }
 
-  async getCashFlow(ref: ProviderCompanyRef, _periodType: PeriodType): Promise<ProviderResult<RawLineItem[]>> {
+  /** Milestone 12B — operating_cash_flow, capex, and the D&A figure used to
+   *  calculate EBITDA (never fetched as a raw fact — EBITDA is not a
+   *  standard GAAP XBRL concept; see the file-level note above
+   *  DEPRECIATION_AMORTIZATION_CONCEPTS). free_cash_flow is NOT fetched or
+   *  stored here — it is calculated (operating_cash_flow - capex) at the
+   *  calculation layer, same separation growth_acceleration already
+   *  maintains between raw facts and derived metrics. */
+  async getCashFlow(ref: ProviderCompanyRef, periodType: PeriodType): Promise<ProviderResult<RawLineItem[]>> {
+    if (periodType !== "ANNUAL") {
+      return {
+        status: "unavailable",
+        data: null,
+        source: null,
+        unavailableReason: `SecEdgarAdapter does not yet support period_type '${periodType}' for getCashFlow — only ANNUAL (form=10-K, fp=FY) is implemented.`,
+      };
+    }
+
+    const cikResult = await this.resolveCik(ref.ticker);
+    if (!cikResult.ok) {
+      return { status: "unavailable", data: null, source: null, unavailableReason: cikResult.reason };
+    }
+    const cik = cikResult.cik;
+
+    const [operatingCashFlow, capex, depreciationAmortization] = await Promise.all([
+      this.fetchMostCurrentAnnualConcept(cik, OPERATING_CASH_FLOW_CONCEPTS, "USD"),
+      this.fetchMostCurrentAnnualConcept(cik, CAPEX_CONCEPTS, "USD"),
+      this.fetchMostCurrentAnnualConcept(cik, DEPRECIATION_AMORTIZATION_CONCEPTS, "USD"),
+    ]);
+
+    const unavailableReasons: string[] = [];
+    const lineItems: RawLineItem[] = [];
+    let mostRecentFact: SecFact | undefined;
+    let mostRecentPeriodEnd: string | undefined;
+
+    const collect = (metricName: string, fallbackIdentifier: string, result: typeof operatingCashFlow) => {
+      if (!result.ok) {
+        unavailableReasons.push(result.reason);
+        return;
+      }
+      const sortedPeriods = [...result.factsByPeriodEnd.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+      for (const [periodEnd, fact] of sortedPeriods.slice(0, LOOKBACK_PERIODS)) {
+        lineItems.push({
+          metricName,
+          metricIdentifier: `sec.us-gaap.${result.concept}`,
+          rawValue: fact.val,
+          unit: "USD",
+          currency: "USD",
+          periodStart: fact.start,
+          periodEnd,
+          periodType: "ANNUAL",
+          filingDate: fact.filed,
+        });
+        if (!mostRecentPeriodEnd || periodEnd > mostRecentPeriodEnd) {
+          mostRecentPeriodEnd = periodEnd;
+          mostRecentFact = fact;
+        }
+      }
+      void fallbackIdentifier;
+    };
+
+    collect("operating_cash_flow", "sec.us-gaap.operating_cash_flow", operatingCashFlow);
+    collect("capex", "sec.us-gaap.capex", capex);
+    collect("depreciation_amortization", "sec.us-gaap.depreciation_amortization", depreciationAmortization);
+
+    if (lineItems.length === 0 || !mostRecentFact) {
+      return {
+        status: "unavailable",
+        data: null,
+        source: null,
+        unavailableReason: unavailableReasons.join(" ") || `No usable SEC annual cash-flow facts found for ${ref.ticker} (CIK ${cik}).`,
+      };
+    }
+
     return {
-      status: "unavailable",
-      data: null,
-      source: null,
-      unavailableReason: `SecEdgarAdapter.getCashFlow is not implemented yet for ${ref.ticker} — income-statement (revenue/net_income/eps) is the only statement implemented so far.`,
+      status: "available",
+      data: lineItems,
+      source: {
+        providerName: "SEC EDGAR",
+        providerType: "SEC",
+        sourceUrl: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${cik}&type=10-K`,
+        sourceDocumentId: mostRecentFact.accn,
+        filingDate: mostRecentFact.filed,
+        reportingPeriodEnd: mostRecentPeriodEnd,
+        currency: "USD",
+      },
     };
   }
 }

@@ -71,9 +71,53 @@ export async function ingestIncomeStatement(
   provider: FinancialDataProvider,
   repo: IngestionRepo
 ): Promise<IngestionResult> {
+  return ingestStatement(companyId, ref, companyCurrency, periodType, provider, repo, "getIncomeStatement");
+}
+
+/** Milestone 12B: same validate -> normalize -> store flow as
+ *  ingestIncomeStatement, sourced from getBalanceSheet instead. */
+export async function ingestBalanceSheet(
+  companyId: string,
+  ref: ProviderCompanyRef,
+  companyCurrency: string,
+  periodType: PeriodType,
+  provider: FinancialDataProvider,
+  repo: IngestionRepo
+): Promise<IngestionResult> {
+  return ingestStatement(companyId, ref, companyCurrency, periodType, provider, repo, "getBalanceSheet");
+}
+
+/** Milestone 12B: same validate -> normalize -> store flow as
+ *  ingestIncomeStatement, sourced from getCashFlow instead. */
+export async function ingestCashFlow(
+  companyId: string,
+  ref: ProviderCompanyRef,
+  companyCurrency: string,
+  periodType: PeriodType,
+  provider: FinancialDataProvider,
+  repo: IngestionRepo
+): Promise<IngestionResult> {
+  return ingestStatement(companyId, ref, companyCurrency, periodType, provider, repo, "getCashFlow");
+}
+
+/** Shared by all three statement-ingestion entry points above — identical
+ *  validate -> normalize -> store flow regardless of which statement method
+ *  supplied the data; only the source call differs. Behavior is byte-for-byte
+ *  what ingestIncomeStatement's body was before this milestone (verified via
+ *  the existing ingestion test suite) — this is a mechanical extraction, not
+ *  a behavior change. */
+async function ingestStatement(
+  companyId: string,
+  ref: ProviderCompanyRef,
+  companyCurrency: string,
+  periodType: PeriodType,
+  provider: FinancialDataProvider,
+  repo: IngestionRepo,
+  method: "getIncomeStatement" | "getBalanceSheet" | "getCashFlow"
+): Promise<IngestionResult> {
   const result: IngestionResult = { companyId, accepted: 0, rejected: 0, canonicalSkipped: 0, issues: [] };
 
-  const response = await provider.getIncomeStatement(ref, periodType);
+  const response = await provider[method](ref, periodType);
   if (response.status !== "available" || !response.data || !response.source) {
     // Explicit unavailability, not an error we paper over.
     result.issues.push({
@@ -151,7 +195,3 @@ export async function ingestIncomeStatement(
 
   return result;
 }
-
-// ingestBalanceSheet / ingestCashFlow follow the identical shape and are
-// omitted here to avoid repetition — same validate → normalize → store flow,
-// swapping provider.getBalanceSheet / provider.getCashFlow as the source call.

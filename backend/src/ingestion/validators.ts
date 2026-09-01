@@ -42,6 +42,10 @@ const CAN_BE_NEGATIVE = new Set([
   "return_3m",
   "return_6m",
   "return_12m",
+  // Milestone 12B: stockholders' equity is legitimately negative for some
+  // real companies (e.g. after sustained large buybacks) — this is a known,
+  // well-documented accounting reality, not a data error to reject.
+  "equity",
 ]);
 
 /**

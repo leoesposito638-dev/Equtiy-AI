@@ -657,16 +657,32 @@ describe("SecEdgarAdapter — general never-fabricate behavior", () => {
     expect(result.unavailableReason).toContain("ANNUAL");
   });
 
-  it("getBalanceSheet returns an honest unavailable, not empty data", async () => {
+  it("getBalanceSheet returns an honest unavailable when no concept has any real data (Milestone 12B)", async () => {
+    mockRoutedFetch({ "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE } });
     const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
     const result = await adapter.getBalanceSheet({ ticker: "NVDA" }, "ANNUAL");
-    expect(result.status).toBe("unavailable");
+    expect(result.status).toBe("unavailable"); // every concept 404s -> no fabricated data
   });
 
-  it("getCashFlow returns an honest unavailable, not empty data", async () => {
+  it("getBalanceSheet returns unavailable for QUARTER period_type (not implemented)", async () => {
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getBalanceSheet({ ticker: "NVDA" }, "QUARTER");
+    expect(result.status).toBe("unavailable");
+    expect(result.unavailableReason).toContain("ANNUAL");
+  });
+
+  it("getCashFlow returns an honest unavailable when no concept has any real data (Milestone 12B)", async () => {
+    mockRoutedFetch({ "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE } });
     const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
     const result = await adapter.getCashFlow({ ticker: "NVDA" }, "ANNUAL");
+    expect(result.status).toBe("unavailable"); // every concept 404s -> no fabricated data
+  });
+
+  it("getCashFlow returns unavailable for QUARTER period_type (not implemented)", async () => {
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getCashFlow({ ticker: "NVDA" }, "QUARTER");
     expect(result.status).toBe("unavailable");
+    expect(result.unavailableReason).toContain("ANNUAL");
   });
 
   it("source.sourceUrl never contains the User-Agent value", async () => {
@@ -681,5 +697,231 @@ describe("SecEdgarAdapter — general never-fabricate behavior", () => {
     const adapter = new SecEdgarAdapter("Very-Secret-Identifying-String contact@example.com");
     const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
     expect(result.source?.sourceUrl).not.toContain("Very-Secret-Identifying-String");
+  });
+});
+
+// ============================================================================
+// Milestone 12B — getBalanceSheet (instant facts) and getCashFlow (duration
+// facts), plus the 4 new getIncomeStatement additions.
+// ============================================================================
+
+describe("SecEdgarAdapter — getBalanceSheet (Milestone 12B)", () => {
+  it("maps cash/total_assets/total_liabilities/equity/current_assets/current_liabilities from real-shaped instant facts, tagged periodType INSTANT with no periodStart", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/CashAndCashEquivalentsAtCarryingValue.json": { status: 200, body: factsBody("USD", [
+        { end: "2026-01-25", val: 8_589_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents.json": { status: 404, body: {} },
+      "us-gaap/Assets.json": { status: 200, body: factsBody("USD", [
+        { end: "2026-01-25", val: 111_601_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "us-gaap/Liabilities.json": { status: 200, body: factsBody("USD", [
+        { end: "2026-01-25", val: 32_274_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "us-gaap/StockholdersEquity.json": { status: 200, body: factsBody("USD", [
+        { end: "2026-01-25", val: 79_327_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest.json": { status: 404, body: {} },
+      "us-gaap/AssetsCurrent.json": { status: 200, body: factsBody("USD", [
+        { end: "2026-01-25", val: 79_034_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "us-gaap/LiabilitiesCurrent.json": { status: 200, body: factsBody("USD", [
+        { end: "2026-01-25", val: 18_047_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getBalanceSheet({ ticker: "NVDA" }, "ANNUAL");
+    expect(result.status).toBe("available");
+    const byMetric = Object.fromEntries(result.data!.map((i) => [i.metricName, i]));
+    expect(byMetric.cash?.rawValue).toBe(8_589_000_000);
+    expect(byMetric.total_assets?.rawValue).toBe(111_601_000_000);
+    expect(byMetric.total_liabilities?.rawValue).toBe(32_274_000_000);
+    expect(byMetric.equity?.rawValue).toBe(79_327_000_000);
+    expect(byMetric.current_assets?.rawValue).toBe(79_034_000_000);
+    expect(byMetric.current_liabilities?.rawValue).toBe(18_047_000_000);
+    for (const item of result.data!) {
+      expect(item.periodType).toBe("INSTANT");
+      expect(item.periodStart).toBeUndefined(); // instant facts have no start
+    }
+  });
+
+  it("falls back to StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest when plain StockholdersEquity is stale — most-current-wins, same principle as revenue/net income (confirmed live for JNJ/CAT/PG)", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "CashAndCashEquivalentsAtCarryingValue.json": { status: 404, body: {} },
+      "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents.json": { status: 404, body: {} },
+      "us-gaap/Assets.json": { status: 404, body: {} },
+      "us-gaap/Liabilities.json": { status: 404, body: {} },
+      "us-gaap/StockholdersEquity.json": { status: 200, body: factsBody("USD", [
+        { end: "2015-12-31", val: 1, fy: 2015, fp: "FY", form: "10-K", filed: "2016-02-01" }, // stale
+      ]) },
+      "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest.json": { status: 200, body: factsBody("USD", [
+        { end: "2025-12-28", val: 99, fy: 2025, fp: "FY", form: "10-K", filed: "2026-01-15" }, // current
+      ]) },
+      "us-gaap/AssetsCurrent.json": { status: 404, body: {} },
+      "us-gaap/LiabilitiesCurrent.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getBalanceSheet({ ticker: "NVDA" }, "ANNUAL");
+    const equity = result.data!.find((i) => i.metricName === "equity");
+    expect(equity?.rawValue).toBe(99);
+    expect(equity?.periodEnd).toBe("2025-12-28");
+    expect(equity?.metricIdentifier).toContain("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest");
+  });
+
+  it("a company legitimately missing one concept (e.g. no current_assets tag, as verified live for banks) still yields the others — per-metric independence", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/CashAndCashEquivalentsAtCarryingValue.json": { status: 200, body: factsBody("USD", [
+        { end: "2025-12-31", val: 500, fy: 2025, fp: "FY", form: "10-K", filed: "2026-01-15" },
+      ]) },
+      "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents.json": { status: 404, body: {} },
+      "us-gaap/Assets.json": { status: 404, body: {} },
+      "us-gaap/Liabilities.json": { status: 404, body: {} },
+      "us-gaap/StockholdersEquity.json": { status: 404, body: {} },
+      "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest.json": { status: 404, body: {} },
+      "us-gaap/AssetsCurrent.json": { status: 404, body: {} }, // e.g. banks don't classify current/non-current
+      "us-gaap/LiabilitiesCurrent.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getBalanceSheet({ ticker: "NVDA" }, "ANNUAL");
+    expect(result.status).toBe("available");
+    expect(result.data!.map((i) => i.metricName)).toEqual(["cash"]);
+  });
+
+  it("only keeps genuinely 10-K/FY instant facts, ignoring quarterly instant facts even if present", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/CashAndCashEquivalentsAtCarryingValue.json": { status: 200, body: factsBody("USD", [
+        { end: "2026-04-26", val: 999, fy: 2027, fp: "Q1", form: "10-Q", filed: "2026-05-20" }, // quarterly, must be excluded
+        { end: "2026-01-25", val: 8_589_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents.json": { status: 404, body: {} },
+      "us-gaap/Assets.json": { status: 404, body: {} },
+      "us-gaap/Liabilities.json": { status: 404, body: {} },
+      "us-gaap/StockholdersEquity.json": { status: 404, body: {} },
+      "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest.json": { status: 404, body: {} },
+      "us-gaap/AssetsCurrent.json": { status: 404, body: {} },
+      "us-gaap/LiabilitiesCurrent.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getBalanceSheet({ ticker: "NVDA" }, "ANNUAL");
+    const cash = result.data!.filter((i) => i.metricName === "cash");
+    expect(cash).toHaveLength(1);
+    expect(cash[0]!.rawValue).toBe(8_589_000_000);
+  });
+});
+
+describe("SecEdgarAdapter — getCashFlow (Milestone 12B)", () => {
+  it("maps operating_cash_flow/capex/depreciation_amortization from real-shaped duration facts", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/NetCashProvidedByUsedInOperatingActivities.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-27", end: "2026-01-25", val: 64_089_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "us-gaap/PaymentsToAcquirePropertyPlantAndEquipment.json": { status: 404, body: {} }, // stale for NVDA, confirmed live
+      "us-gaap/PaymentsToAcquireProductiveAssets.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-27", end: "2026-01-25", val: 3_236_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "us-gaap/DepreciationDepletionAndAmortization.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-27", end: "2026-01-25", val: 1_864_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "DepreciationAmortizationAndAccretionNet.json": { status: 404, body: {} },
+      "us-gaap/DepreciationAndAmortization.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getCashFlow({ ticker: "NVDA" }, "ANNUAL");
+    expect(result.status).toBe("available");
+    const byMetric = Object.fromEntries(result.data!.map((i) => [i.metricName, i]));
+    expect(byMetric.operating_cash_flow?.rawValue).toBe(64_089_000_000);
+    expect(byMetric.capex?.rawValue).toBe(3_236_000_000);
+    expect(byMetric.capex?.metricIdentifier).toContain("PaymentsToAcquireProductiveAssets"); // fallback concept won
+    expect(byMetric.depreciation_amortization?.rawValue).toBe(1_864_000_000);
+    for (const item of result.data!) expect(item.periodType).toBe("ANNUAL");
+  });
+
+  it("a company with no capex concept at all (e.g. a bank) still yields operating_cash_flow — per-metric independence", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/NetCashProvidedByUsedInOperatingActivities.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-01", end: "2025-12-31", val: 42, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-01" },
+      ]) },
+      "us-gaap/PaymentsToAcquirePropertyPlantAndEquipment.json": { status: 404, body: {} },
+      "us-gaap/PaymentsToAcquireProductiveAssets.json": { status: 404, body: {} },
+      "us-gaap/DepreciationDepletionAndAmortization.json": { status: 404, body: {} },
+      "DepreciationAmortizationAndAccretionNet.json": { status: 404, body: {} },
+      "us-gaap/DepreciationAndAmortization.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getCashFlow({ ticker: "NVDA" }, "ANNUAL");
+    expect(result.status).toBe("available");
+    expect(result.data!.map((i) => i.metricName)).toEqual(["operating_cash_flow"]);
+  });
+});
+
+describe("SecEdgarAdapter — getIncomeStatement Milestone 12B additions", () => {
+  it("collects gross_profit/operating_income/interest_expense/research_development alongside the existing 3 metrics", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-27", end: "2026-01-25", val: 215_938_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "NetIncomeLoss.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-27", end: "2026-01-25", val: 120_067_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "EarningsPerShareBasic.json": { status: 200, body: factsBody("USD/shares", [
+        { start: "2025-01-27", end: "2026-01-25", val: 4.93, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "us-gaap/GrossProfit.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-27", end: "2026-01-25", val: 160_000_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "us-gaap/OperatingIncomeLoss.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-27", end: "2026-01-25", val: 130_000_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "us-gaap/InterestExpense.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-27", end: "2026-01-25", val: 300_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "InterestExpenseDebt.json": { status: 404, body: {} },
+      "us-gaap/ResearchAndDevelopmentExpense.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-27", end: "2026-01-25", val: 16_000_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+    expect(result.status).toBe("available");
+    const byMetric = Object.fromEntries(result.data!.map((i) => [i.metricName, i]));
+    expect(byMetric.gross_profit?.rawValue).toBe(160_000_000_000);
+    expect(byMetric.operating_income?.rawValue).toBe(130_000_000_000);
+    expect(byMetric.interest_expense?.rawValue).toBe(300_000_000);
+    expect(byMetric.research_development?.rawValue).toBe(16_000_000_000);
+    // Original 3 metrics still present and unaffected by the additions.
+    expect(byMetric.revenue?.rawValue).toBe(215_938_000_000);
+    expect(byMetric.net_income?.rawValue).toBe(120_067_000_000);
+    expect(byMetric.eps?.rawValue).toBe(4.93);
+  });
+
+  it("missing gross_profit/operating_income/interest_expense/research_development (e.g. a bank) does not block revenue/net_income/eps", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-01", end: "2025-12-31", val: 1, fy: 2025, fp: "FY", form: "10-K", filed: "2026-01-15" },
+      ]) },
+      "NetIncomeLoss.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-01", end: "2025-12-31", val: 1, fy: 2025, fp: "FY", form: "10-K", filed: "2026-01-15" },
+      ]) },
+      "EarningsPerShareBasic.json": { status: 200, body: factsBody("USD/shares", [
+        { start: "2025-01-01", end: "2025-12-31", val: 1, fy: 2025, fp: "FY", form: "10-K", filed: "2026-01-15" },
+      ]) },
+      "us-gaap/GrossProfit.json": { status: 404, body: {} },
+      "us-gaap/OperatingIncomeLoss.json": { status: 404, body: {} },
+      "us-gaap/InterestExpense.json": { status: 404, body: {} },
+      "InterestExpenseDebt.json": { status: 404, body: {} },
+      "us-gaap/ResearchAndDevelopmentExpense.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+    expect(result.status).toBe("available");
+    expect(result.data!.map((i) => i.metricName).sort()).toEqual(["eps", "net_income", "revenue"]);
   });
 });

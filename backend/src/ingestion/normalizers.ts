@@ -16,11 +16,16 @@ export interface FxRate {
 
 const INCOME_STATEMENT_METRICS = new Set([
   "revenue", "gross_profit", "operating_income", "ebitda", "net_income", "eps",
+  "interest_expense", "research_development", // Milestone 12B
 ]);
 const BALANCE_SHEET_METRICS = new Set([
   "cash", "total_debt", "net_debt", "total_assets", "total_liabilities", "equity",
+  "current_assets", "current_liabilities", // Milestone 12B
 ]);
-const CASH_FLOW_METRICS = new Set(["operating_cash_flow", "capex", "free_cash_flow"]);
+const CASH_FLOW_METRICS = new Set([
+  "operating_cash_flow", "capex", "free_cash_flow",
+  "depreciation_amortization", // Milestone 12B
+]);
 
 function categoryFor(metricName: string): FinancialMetric["metricCategory"] {
   if (INCOME_STATEMENT_METRICS.has(metricName)) return "INCOME_STATEMENT";
