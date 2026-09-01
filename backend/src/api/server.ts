@@ -18,6 +18,19 @@ export function buildServer() {
   const app = express();
   app.use(express.json());
 
+  // Minimal CORS so a browser-based frontend on a different origin/port can
+  // reach this API — no `cors` package added, this is the whole of what's
+  // needed (GET-only public surface, plus PATCH/POST for watchlists/alerts).
+  // Local-dev/demo scope: matches the permissive `*` already used by
+  // localDev/server.ts for the same reason.
+  app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-user-id");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
+  });
+
   // Public/user-facing surface
   app.use("/companies", companiesRouter);
   app.use("/search", searchRouter);

@@ -1,8 +1,10 @@
 import React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ChevronLeft, FileText, Info, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
-import { useCompanies, useCompanyAnalysis, useCompanyChanges, useCompanyFinancials, useCompanyScores } from "../lib/useApi";
+import { useCompanies, useCompanyAnalysis, useCompanyChanges, useCompanyFinancials, useCompanyMetrics, useCompanyScores } from "../lib/useApi";
 import { useFollowed } from "../lib/followedContext";
+import { primaryScore } from "../lib/primaryScore";
+import { latestGrowthMetrics } from "../lib/growthMetrics";
 import { Card, CategoryBar, ConfidenceBadge, ChangeTag, ScoreGauge, SectionLabel, StatusBadge } from "../components/Primitives";
 import { DataUnavailable, ErrorBlock, LoadingBlock } from "../components/States";
 import { C, CATEGORY_ORDER, severityColor, severityFromImportance } from "../styles/tokens";
@@ -51,6 +53,7 @@ export default function CompanyPage() {
   const { data: companies } = useCompanies();
   const { data: scores, loading: scoresLoading, error: scoresError } = useCompanyScores(id);
   const { data: financials, loading: finLoading } = useCompanyFinancials(id);
+  const { data: metrics } = useCompanyMetrics(id);
   const { data: analysis, loading: analysisLoading } = useCompanyAnalysis(id);
   const { data: changes } = useCompanyChanges(id);
 
@@ -62,6 +65,8 @@ export default function CompanyPage() {
 
   const fundamental = scores?.fundamental;
   const categories = scores?.categories ?? [];
+  const headline = primaryScore(scores);
+  const growthMetrics = latestGrowthMetrics(metrics ?? []);
   const thesis = analysis?.thesis;
   const isFollowed = followed.has(id);
 
@@ -81,52 +86,67 @@ export default function CompanyPage() {
         </button>
       </div>
 
-      {!fundamental ? (
+      {!headline ? (
         <Card style={{ padding: 30, marginBottom: 16, textAlign: "center" }}>
-          <p style={{ fontSize: 13.5, color: C.textSoft, margin: 0 }}>No fundamental score yet — this company hasn't completed a scoring run.</p>
+          <p style={{ fontSize: 13.5, color: C.textSoft, margin: 0 }}>No score yet — this company hasn't completed a scoring run.</p>
         </Card>
       ) : (
-        <>
-          <Card style={{ padding: "26px 24px", marginBottom: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 28, flexWrap: "wrap", marginBottom: 18 }}>
-              <ScoreGauge score={fundamental.score} />
-              <div style={{ flex: 1, minWidth: 180 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
-                  <StatusBadge score={fundamental.score} />
-                  <ChangeTag value={fundamental.score_change} />
-                  {fundamental.previous_score != null && <span style={{ fontSize: 12, color: C.textFaint }}>from {fundamental.previous_score}</span>}
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <ConfidenceBadge confidence={fundamental.confidence} />
+        <Card style={{ padding: "26px 24px", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 28, flexWrap: "wrap", marginBottom: fundamental ? 18 : 0 }}>
+            <ScoreGauge score={headline.score} label={headline.label} />
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+                <StatusBadge score={headline.score} />
+                {fundamental && <ChangeTag value={fundamental.score_change} />}
+                {fundamental?.previous_score != null && <span style={{ fontSize: 12, color: C.textFaint }}>from {fundamental.previous_score}</span>}
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <ConfidenceBadge confidence={headline.confidence} />
+                {fundamental && (
                   <span style={{ fontSize: 11.5, fontWeight: 600, color: C.textFaint, backgroundColor: C.surfaceSunken, padding: "3px 8px", borderRadius: 999 }}>
                     Data coverage {Math.round(fundamental.data_coverage * 100)}%
                   </span>
-                  <span style={{ fontSize: 11.5, fontWeight: 600, color: C.textFaint, backgroundColor: C.surfaceSunken, padding: "3px 8px", borderRadius: 999 }}>
-                    calc {fundamental.calculation_version}
-                  </span>
-                </div>
+                )}
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: C.textFaint, backgroundColor: C.surfaceSunken, padding: "3px 8px", borderRadius: 999 }}>
+                  calc {fundamental ? fundamental.calculation_version : categories.find((c) => c.score_categories.category_key === "GROWTH")?.calculation_version}
+                </span>
               </div>
             </div>
-            <OpportunityChip score={analysis?.snapshot?.opportunity_score ?? null} confidence={fundamental.confidence} />
-          </Card>
-
-          <Card style={{ padding: "22px 24px", marginBottom: 16 }}>
-            <SectionLabel>Score Dimensions</SectionLabel>
-            <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-              {CATEGORY_ORDER.map((key) => {
-                const c = categories.find((x) => x.score_categories.category_key === key);
-                if (!c) return (
-                  <div key={key} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ width: 148, fontSize: 13, color: C.textFaint }}>{key}</div>
-                    <DataUnavailable label="Not yet scored" />
-                  </div>
-                );
-                return <CategoryBar key={key} label={c.score_categories.name} value={c.score} confidence={c.confidence} />;
-              })}
-            </div>
-          </Card>
-        </>
+          </div>
+          {fundamental && <OpportunityChip score={analysis?.snapshot?.opportunity_score ?? null} confidence={fundamental.confidence} />}
+        </Card>
       )}
+
+      <Card style={{ padding: "22px 24px", marginBottom: 16 }}>
+        <SectionLabel>Score Dimensions</SectionLabel>
+        <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
+          {CATEGORY_ORDER.map((key) => {
+            const c = categories.find((x) => x.score_categories.category_key === key);
+            if (!c) return (
+              <div key={key} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ width: 148, fontSize: 13, color: C.textFaint }}>{key}</div>
+                <DataUnavailable label="Not yet scored" />
+              </div>
+            );
+            return <CategoryBar key={key} label={c.score_categories.name} value={c.score} confidence={c.confidence} />;
+          })}
+        </div>
+      </Card>
+
+      <Card style={{ padding: "22px 24px", marginBottom: 16 }}>
+        <SectionLabel>Growth Metrics</SectionLabel>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 20 }}>
+          {growthMetrics.map((m) => (
+            <div key={m.metricName}>
+              <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}>{m.label}</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>
+                {m.value != null ? `${m.value}${m.unit}` : <DataUnavailable />}
+              </div>
+              {m.periodEnd && <div style={{ fontSize: 11, color: C.textFaint, marginTop: 6 }}>{m.periodEnd} (ANNUAL)</div>}
+            </div>
+          ))}
+        </div>
+      </Card>
 
       {thesis && (
         <Card style={{ padding: "22px 24px", marginBottom: 16 }}>

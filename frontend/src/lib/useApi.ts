@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import { DEMO_MODE } from "./config";
 import { api, ApiError } from "./apiClient";
+import { filterToDemoUniverse } from "./demoUniverse";
 import {
   FIXTURE_ALERTS, FIXTURE_ANALYSIS, FIXTURE_CHANGES, FIXTURE_COMPANIES,
   FIXTURE_FINANCIALS, FIXTURE_FOLLOWED, FIXTURE_SCORES, FIXTURE_VALUATION,
@@ -59,7 +60,11 @@ function useAsync<T>(fetcher: () => Promise<T>, demoValue: T, deps: unknown[]): 
 }
 
 export function useCompanies(): AsyncState<Company[]> {
-  return useAsync(api.listCompanies, FIXTURE_COMPANIES, []);
+  return useAsync(() => api.listCompanies().then(filterToDemoUniverse), FIXTURE_COMPANIES, []);
+}
+
+export function useCompanyMetrics(id: string | undefined): AsyncState<CalculatedMetricRow[]> {
+  return useAsync(() => api.getCompanyMetrics(id!), [], [id]);
 }
 
 export function useCompanyScores(id: string | undefined): AsyncState<ScoresResponse> {

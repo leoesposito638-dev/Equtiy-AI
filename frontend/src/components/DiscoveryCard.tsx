@@ -1,5 +1,6 @@
 import React from "react";
 import { useCompanyAnalysis, useCompanyScores } from "../lib/useApi";
+import { primaryScore } from "../lib/primaryScore";
 import { Card } from "./Primitives";
 import { C } from "../styles/tokens";
 import type { Company } from "../lib/types";
@@ -9,7 +10,7 @@ export function DiscoveryCard({ company, onAnalyze, onFollow, followed }: {
 }) {
   const { data: scores } = useCompanyScores(company.id);
   const { data: analysis } = useCompanyAnalysis(company.id);
-  const fundamental = scores?.fundamental;
+  const headline = primaryScore(scores);
 
   return (
     <Card style={{ padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -18,7 +19,10 @@ export function DiscoveryCard({ company, onAnalyze, onFollow, followed }: {
           <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{company.name}</div>
           <div style={{ fontSize: 11.5, color: C.textFaint }}>{company.ticker}</div>
         </div>
-        <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{fundamental?.score ?? "—"}</div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{headline?.score ?? "—"}</div>
+          {headline && <div style={{ fontSize: 10, color: C.textFaint }}>{headline.label}</div>}
+        </div>
       </div>
       <p style={{ fontSize: 12.5, color: C.textSoft, margin: 0, lineHeight: 1.5, minHeight: 38 }}>
         {analysis?.thesis?.thesis ?? "Analysis not yet available for this company."}
