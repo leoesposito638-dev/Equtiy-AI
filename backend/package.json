@@ -20,6 +20,8 @@
     "verify:resolver-live": "ts-node --transpile-only src/localDev/verifyProviderResolverLive.ts",
     "milestone8d:dry-run": "ts-node --transpile-only src/localDev/milestone8dDryRunNvda.ts",
     "milestone8d:real-write": "ts-node --transpile-only src/localDev/milestone8dRealWriteNvda.ts",
+    "milestone8e:preflight": "ts-node --transpile-only src/localDev/milestone8ePreflightAndProviderOnly.ts",
+    "milestone8e:ingest": "ts-node --transpile-only src/localDev/milestone8eIngestionAndVerify.ts",
     "build": "tsc -p tsconfig.json",
     "migrate": "echo 'Run schema/*.sql in order against your Postgres/Supabase instance (e.g. psql $DATABASE_URL -f schema/001_core_tables.sql ...)'"
   },
