@@ -7,10 +7,10 @@
 // validation only (see Milestone 7B scope).
 //
 // SCOPE (matches the Milestone 7A feasibility findings exactly):
-//   - getIncomeStatement: ANNUAL period only (form=="10-K", fp=="FY").
-//     Maps revenue (Revenues, falling back to
-//     RevenueFromContractWithCustomerExcludingAssessedTax), net_income
-//     (NetIncomeLoss), and eps (EarningsPerShareBasic) — the same 3 metrics
+//   - getIncomeStatement: ANNUAL period only (form=="10-K", fp=="FY", and —
+//     Milestone 9D — a genuinely ~1-year start/end span). Maps revenue
+//     (REVENUE_CONCEPTS fallback), net_income (NET_INCOME_CONCEPTS
+//     fallback), and eps (EarningsPerShareBasic) — the same 3 metrics
 //     FmpFinancialDataAdapter maps, same RawLineItem shape, same
 //     per-metric/per-period independence (a period missing one metric still
 //     yields line items for the others).
@@ -57,11 +57,32 @@ import type { PeriodType } from "../../types/domain";
 const SEC_DATA_BASE_URL = "https://data.sec.gov/api/xbrl/companyconcept";
 const SEC_TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json";
 
-/** Tried in this exact order — see the file header for why a fallback list
- *  is required at all (confirmed empirically in Milestone 7A, not assumed). */
-const REVENUE_CONCEPTS = ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"];
-const NET_INCOME_CONCEPT = "NetIncomeLoss";
+/** All evaluated; the concept whose annual series is most CURRENT wins (see
+ *  fetchMostCurrentAnnualConcept) — order here is not a preference, just the
+ *  set of concepts considered (confirmed empirically in Milestones 7A/9B/9C,
+ *  never assumed). RevenuesNetOfInterestExpense added in Milestone 9D:
+ *  banks/broker-dealers (e.g. WFC, MS) report their top-line "total net
+ *  revenue" under this concept instead of Revenues/RevenueFromContract...,
+ *  which for them carries only stale historical facts. */
+const REVENUE_CONCEPTS = ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "RevenuesNetOfInterestExpense"];
+/** Same "evaluate all, most current wins" principle as REVENUE_CONCEPTS
+ *  (Milestone 9D) — some filers' NetIncomeLoss facts go stale while
+ *  ProfitLoss (a standard, generic GAAP concept, not company-specific)
+ *  remains current, confirmed live for MA and CAT. */
+const NET_INCOME_CONCEPTS = ["NetIncomeLoss", "ProfitLoss"];
 const EPS_CONCEPT = "EarningsPerShareBasic";
+
+/** A genuinely annual fact's start/end span should be about one year.
+ *  Milestone 9D: SEC facts carrying form="10-K" && fp="FY" are NOT
+ *  sufficient on their own to guarantee an annual span — a 10-K can
+ *  disclose quarterly/stub figures (e.g. supplementary quarterly data)
+ *  tagged with the same form/fp metadata as the filing itself. Confirmed
+ *  live for HON (three ~90-day facts ranked ahead of real prior-year annual
+ *  facts) and reproduced for TSLA/JNJ. Range is inclusive and wide enough to
+ *  cover legitimate 52/53-week fiscal years (~364-371 days) and minor
+ *  fiscal-calendar drift, while excluding quarters (~90 days) and half-years. */
+const MIN_ANNUAL_SPAN_DAYS = 340;
+const MAX_ANNUAL_SPAN_DAYS = 390;
 
 /** Matches FmpFinancialDataAdapter's LOOKBACK_PERIODS exactly, for
  *  consistent behavior/volume across providers implementing the same
@@ -93,6 +114,18 @@ interface SecTickerMapEntry {
 
 function pad10(cik: number): string {
   return String(cik).padStart(10, "0");
+}
+
+/** Milestone 9D: true iff `fact` spans roughly one year, computed from its
+ *  ACTUAL start/end dates — never inferred from form/fp/calendar-year/period
+ *  spacing alone (see MIN/MAX_ANNUAL_SPAN_DAYS above). A fact with no
+ *  `start` cannot be verified and is treated as not-annual — flow concepts
+ *  like revenue/net income/EPS always carry a start in real SEC data, so
+ *  this only excludes genuinely unverifiable facts, never guesses. */
+function isGenuinelyAnnualSpan(fact: SecFact): boolean {
+  if (!fact.start) return false;
+  const days = Math.round((new Date(fact.end).getTime() - new Date(fact.start).getTime()) / (1000 * 60 * 60 * 24));
+  return days >= MIN_ANNUAL_SPAN_DAYS && days <= MAX_ANNUAL_SPAN_DAYS;
 }
 
 export class SecEdgarAdapter implements FinancialDataProvider {
@@ -146,9 +179,12 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     return { ok: true, cik };
   }
 
-  /** Fetches one concept, filters to ANNUAL 10-K/FY facts, and deduplicates
-   *  by period (`end`), keeping the most-recently-`filed` fact for each —
-   *  never the first match, per the restatement risk documented above. */
+  /** Fetches one concept, filters to genuinely ANNUAL 10-K/FY facts (form/fp
+   *  metadata AND an actual ~1-year start/end span — Milestone 9D, see
+   *  isGenuinelyAnnualSpan), and deduplicates by period (`end`), keeping the
+   *  most-recently-`filed` fact for each — never the first match, per the
+   *  restatement risk documented above. Order: form/fp filter -> span
+   *  filter -> restatement dedup, exactly as approved. */
   private async fetchAnnualConcept(
     cik: string,
     concept: string,
@@ -164,9 +200,11 @@ export class SecEdgarAdapter implements FinancialDataProvider {
       return { ok: false, reason: `SEC concept us-gaap:${concept} has no '${unitsKey}' facts (from ${url}).` };
     }
 
-    const annualFacts = facts.filter((f) => f.form === "10-K" && f.fp === "FY" && typeof f.val === "number" && !Number.isNaN(f.val));
+    const annualFacts = facts.filter(
+      (f) => f.form === "10-K" && f.fp === "FY" && typeof f.val === "number" && !Number.isNaN(f.val) && isGenuinelyAnnualSpan(f)
+    );
     if (annualFacts.length === 0) {
-      return { ok: false, reason: `SEC concept us-gaap:${concept} has no annual (10-K, FY) facts (from ${url}).` };
+      return { ok: false, reason: `SEC concept us-gaap:${concept} has no genuinely annual (10-K, FY, ~1-year span) facts (from ${url}).` };
     }
 
     const factsByPeriodEnd = new Map<string, SecFact>();
@@ -179,24 +217,29 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     return { ok: true, factsByPeriodEnd };
   }
 
-  /** Revenue-only: fetches EVERY concept in REVENUE_CONCEPTS (does not stop
-   *  at the first one with any annual data) and selects whichever concept's
-   *  annual series is most CURRENT — i.e. has the latest period end. Never
-   *  assumes one tag works for every company (Milestone 7A, C1), and never
-   *  assumes the first concept with *any* historical data is the *right*
-   *  concept (Milestone 9B): a company that migrated off `Revenues` around
-   *  ASC 606 adoption (~2018) can still have old, frozen `Revenues` facts
-   *  years after switching to `RevenueFromContractWithCustomerExcludingAssessedTax`
-   *  for its actual current filings — confirmed live for
-   *  AAPL/MSFT/META/CSCO/AMAT/HON/UNP/HD/AVGO/WFC/MS. Selection is entirely
-   *  data-driven from the facts SEC actually returns — no ticker-specific
-   *  logic. */
-  private async fetchAnnualRevenue(cik: string): Promise<{ ok: true; concept: string; factsByPeriodEnd: Map<string, SecFact> } | { ok: false; reason: string }> {
+  /** Shared by revenue (Milestone 9B) and net income (Milestone 9D):
+   *  fetches EVERY concept in `concepts` (does not stop at the first one
+   *  with any annual data) and selects whichever concept's annual series is
+   *  most CURRENT — i.e. has the latest period end. Never assumes one tag
+   *  works for every company (Milestone 7A, C1), and never assumes the
+   *  first concept with *any* historical data is the *right* concept
+   *  (Milestone 9B): a company can have old, frozen facts under a former
+   *  concept years after switching to a different one for its actual
+   *  current filings — confirmed live for revenue
+   *  (AAPL/MSFT/META/CSCO/AMAT/HON/UNP/HD/AVGO/WFC/MS) and for net income
+   *  (MA/CAT). Selection is entirely data-driven from the facts SEC
+   *  actually returns — no ticker-specific logic, no arbitrary preference
+   *  by list order. */
+  private async fetchMostCurrentAnnualConcept(
+    cik: string,
+    concepts: string[],
+    unitsKey: "USD" | "USD/shares"
+  ): Promise<{ ok: true; concept: string; factsByPeriodEnd: Map<string, SecFact> } | { ok: false; reason: string }> {
     const reasons: string[] = [];
     const candidates: Array<{ concept: string; factsByPeriodEnd: Map<string, SecFact>; latestPeriodEnd: string }> = [];
 
-    for (const concept of REVENUE_CONCEPTS) {
-      const result = await this.fetchAnnualConcept(cik, concept, "USD");
+    for (const concept of concepts) {
+      const result = await this.fetchAnnualConcept(cik, concept, unitsKey);
       if (!result.ok) {
         reasons.push(result.reason);
         continue;
@@ -209,11 +252,19 @@ export class SecEdgarAdapter implements FinancialDataProvider {
       return { ok: false, reason: reasons.join(" ") };
     }
 
-    // Most current series wins, regardless of REVENUE_CONCEPTS order — a
-    // concept with only stale historical facts must never shadow a concept
-    // whose annual series actually extends to the present.
+    // Most current series wins, regardless of list order — a concept with
+    // only stale historical facts must never shadow a concept whose annual
+    // series actually extends to the present.
     const best = candidates.reduce((a, b) => (b.latestPeriodEnd > a.latestPeriodEnd ? b : a));
     return { ok: true, concept: best.concept, factsByPeriodEnd: best.factsByPeriodEnd };
+  }
+
+  private fetchAnnualRevenue(cik: string) {
+    return this.fetchMostCurrentAnnualConcept(cik, REVENUE_CONCEPTS, "USD");
+  }
+
+  private fetchAnnualNetIncome(cik: string) {
+    return this.fetchMostCurrentAnnualConcept(cik, NET_INCOME_CONCEPTS, "USD");
   }
 
   async getIncomeStatement(ref: ProviderCompanyRef, periodType: PeriodType): Promise<ProviderResult<RawLineItem[]>> {
@@ -234,7 +285,7 @@ export class SecEdgarAdapter implements FinancialDataProvider {
 
     const [revenue, netIncome, eps] = await Promise.all([
       this.fetchAnnualRevenue(cik),
-      this.fetchAnnualConcept(cik, NET_INCOME_CONCEPT, "USD"),
+      this.fetchAnnualNetIncome(cik),
       this.fetchAnnualConcept(cik, EPS_CONCEPT, "USD/shares"),
     ]);
 
@@ -269,7 +320,7 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     };
 
     collect("revenue", revenue.ok ? `sec.us-gaap.${revenue.concept}` : "sec.us-gaap.revenue", "USD", revenue);
-    collect("net_income", `sec.us-gaap.${NET_INCOME_CONCEPT}`, "USD", netIncome);
+    collect("net_income", netIncome.ok ? `sec.us-gaap.${netIncome.concept}` : "sec.us-gaap.net_income", "USD", netIncome);
     collect("eps", `sec.us-gaap.${EPS_CONCEPT}`, "USD_PER_SHARE", eps);
 
     if (lineItems.length === 0 || !mostRecentFact) {

@@ -230,8 +230,8 @@ describe("SecEdgarAdapter — revenue CONCEPT SELECTION prefers the current seri
       "RevenueFromContractWithCustomerExcludingAssessedTax.json": {
         status: 200,
         body: factsBody("USD", [
-          { start: "2024-01-01", end: "2025-12-31", val: 999, fy: 2025, fp: "FY", form: "10-K", filed: "2025-02-01" }, // original
-          { start: "2024-01-01", end: "2025-12-31", val: 1_050, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-01" }, // restated, filed later
+          { start: "2025-01-01", end: "2025-12-31", val: 999, fy: 2025, fp: "FY", form: "10-K", filed: "2025-02-01" }, // original
+          { start: "2025-01-01", end: "2025-12-31", val: 1_050, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-01" }, // restated, filed later
         ]),
       },
       "NetIncomeLoss.json": { status: 404, body: {} },
@@ -292,6 +292,241 @@ describe("SecEdgarAdapter — revenue CONCEPT SELECTION prefers the current seri
     const result = await adapter.getIncomeStatement({ ticker: "AAPL" }, "ANNUAL");
     expect(result.data!.find((i) => i.metricName === "net_income")).toMatchObject({ rawValue: 93_736_000_000, unit: "USD" });
     expect(result.data!.find((i) => i.metricName === "eps")).toMatchObject({ rawValue: 6.11, unit: "USD_PER_SHARE" });
+  });
+});
+
+describe("SecEdgarAdapter — revenue concept selection extended to RevenuesNetOfInterestExpense (Milestone 9D)", () => {
+  it("chooses RevenuesNetOfInterestExpense when Revenues is stale — the WFC/MS pattern", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 200, body: factsBody("USD", [
+        { start: "2018-01-01", end: "2018-12-31", val: 85_063_000_000, fy: 2018, fp: "FY", form: "10-K", filed: "2019-02-27" },
+      ]) },
+      "RevenueFromContractWithCustomerExcludingAssessedTax.json": { status: 404, body: {} },
+      "RevenuesNetOfInterestExpense.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-01", end: "2025-12-31", val: 83_699_000_000, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-24" },
+      ]) },
+      "NetIncomeLoss.json": { status: 404, body: {} },
+      "EarningsPerShareBasic.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+    const revenue = result.data!.find((i) => i.metricName === "revenue");
+    expect(revenue).toMatchObject({ rawValue: 83_699_000_000, metricIdentifier: "sec.us-gaap.RevenuesNetOfInterestExpense" });
+  });
+
+  it("keeps Revenues selected when it is already current, even with all three concepts present", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-01", end: "2025-12-31", val: 182_447_000_000, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-13" },
+      ]) },
+      "RevenueFromContractWithCustomerExcludingAssessedTax.json": { status: 404, body: {} },
+      "RevenuesNetOfInterestExpense.json": { status: 200, body: factsBody("USD", [
+        { start: "2024-01-01", end: "2024-12-31", val: 170_000_000_000, fy: 2024, fp: "FY", form: "10-K", filed: "2025-02-13" },
+      ]) },
+      "NetIncomeLoss.json": { status: 404, body: {} },
+      "EarningsPerShareBasic.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "AAPL" }, "ANNUAL");
+    const revenue = result.data!.find((i) => i.metricName === "revenue");
+    expect(revenue).toMatchObject({ rawValue: 182_447_000_000, metricIdentifier: "sec.us-gaap.Revenues" });
+  });
+
+  it("works when RevenuesNetOfInterestExpense is the only concept with any data", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 404, body: {} },
+      "RevenueFromContractWithCustomerExcludingAssessedTax.json": { status: 404, body: {} },
+      "RevenuesNetOfInterestExpense.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-01", end: "2025-12-31", val: 70_645_000_000, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-19" },
+      ]) },
+      "NetIncomeLoss.json": { status: 404, body: {} },
+      "EarningsPerShareBasic.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+    expect(result.status).toBe("available");
+    const revenue = result.data!.find((i) => i.metricName === "revenue");
+    expect(revenue).toMatchObject({ rawValue: 70_645_000_000, metricIdentifier: "sec.us-gaap.RevenuesNetOfInterestExpense" });
+  });
+});
+
+describe("SecEdgarAdapter — net income concept fallback (Milestone 9D)", () => {
+  it("chooses ProfitLoss when NetIncomeLoss is stale — the MA/CAT pattern", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 404, body: {} },
+      "RevenueFromContractWithCustomerExcludingAssessedTax.json": { status: 404, body: {} },
+      "NetIncomeLoss.json": { status: 200, body: factsBody("USD", [
+        { start: "2013-01-01", end: "2013-12-31", val: 3_116_000_000, fy: 2013, fp: "FY", form: "10-K", filed: "2014-02-14" },
+      ]) },
+      "ProfitLoss.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-01", end: "2025-12-31", val: 14_968_000_000, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-11" },
+      ]) },
+      "EarningsPerShareBasic.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+    const netIncome = result.data!.find((i) => i.metricName === "net_income");
+    expect(netIncome).toMatchObject({ rawValue: 14_968_000_000, metricIdentifier: "sec.us-gaap.ProfitLoss" });
+  });
+
+  it("keeps NetIncomeLoss selected when it is already current", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 404, body: {} },
+      "RevenueFromContractWithCustomerExcludingAssessedTax.json": { status: 404, body: {} },
+      "NetIncomeLoss.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-27", end: "2026-01-25", val: 120_067_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+      "ProfitLoss.json": { status: 404, body: {} },
+      "EarningsPerShareBasic.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+    const netIncome = result.data!.find((i) => i.metricName === "net_income");
+    expect(netIncome).toMatchObject({ rawValue: 120_067_000_000, metricIdentifier: "sec.us-gaap.NetIncomeLoss" });
+  });
+
+  it("works when only NetIncomeLoss has any data", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 404, body: {} },
+      "RevenueFromContractWithCustomerExcludingAssessedTax.json": { status: 404, body: {} },
+      "NetIncomeLoss.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-01", end: "2025-12-31", val: 500, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-01" },
+      ]) },
+      "ProfitLoss.json": { status: 404, body: {} },
+      "EarningsPerShareBasic.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+    expect(result.data!.find((i) => i.metricName === "net_income")).toMatchObject({ rawValue: 500, metricIdentifier: "sec.us-gaap.NetIncomeLoss" });
+  });
+
+  it("works when only ProfitLoss has any data", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 404, body: {} },
+      "RevenueFromContractWithCustomerExcludingAssessedTax.json": { status: 404, body: {} },
+      "NetIncomeLoss.json": { status: 404, body: {} },
+      "ProfitLoss.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-01", end: "2025-12-31", val: 8_882_000_000, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-13" },
+      ]) },
+      "EarningsPerShareBasic.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "AAPL" }, "ANNUAL");
+    expect(result.data!.find((i) => i.metricName === "net_income")).toMatchObject({ rawValue: 8_882_000_000, metricIdentifier: "sec.us-gaap.ProfitLoss" });
+  });
+});
+
+describe("SecEdgarAdapter — genuine annual-period span validation (Milestone 9D)", () => {
+  it("rejects a 90-day quarterly fact incorrectly tagged form=10-K/fp=FY — the HON pattern", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 404, body: {} },
+      "RevenueFromContractWithCustomerExcludingAssessedTax.json": {
+        status: 200,
+        body: factsBody("USD", [
+          // Real annual fact for 2024 — must survive.
+          { start: "2024-01-01", end: "2024-12-31", val: 38_498_000_000, fy: 2024, fp: "FY", form: "10-K", filed: "2025-02-14" },
+          // Quarterly supplementary facts disclosed WITHIN the 10-K, tagged
+          // with the same form/fp as the filing itself — must be excluded.
+          { start: "2025-01-01", end: "2025-03-31", val: 8_925_000_000, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-17" },
+          { start: "2025-04-01", end: "2025-06-30", val: 9_322_000_000, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-17" },
+          { start: "2025-07-01", end: "2025-09-30", val: 9_437_000_000, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-17" },
+          // The real FY2025 annual fact — must be the one selected as most recent.
+          { start: "2025-01-01", end: "2025-12-31", val: 37_442_000_000, fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-17" },
+        ]),
+      },
+      "NetIncomeLoss.json": { status: 404, body: {} },
+      "EarningsPerShareBasic.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+    const revenueItems = result.data!.filter((i) => i.metricName === "revenue").sort((a, b) => (a.periodEnd < b.periodEnd ? -1 : 1));
+    expect(revenueItems.map((i) => i.periodEnd)).toEqual(["2024-12-31", "2025-12-31"]);
+    expect(revenueItems.every((i) => {
+      const days = Math.round((new Date(i.periodEnd).getTime() - new Date(i.periodStart!).getTime()) / 86400000);
+      return days >= 340 && days <= 390;
+    })).toBe(true);
+  });
+
+  it("rejects other clearly short periods (e.g. a ~180-day half-year fact)", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-01", end: "2025-06-30", val: 999, fy: 2025, fp: "FY", form: "10-K", filed: "2025-08-01" }, // ~180 days
+      ]) },
+      "RevenueFromContractWithCustomerExcludingAssessedTax.json": { status: 404, body: {} },
+      "RevenuesNetOfInterestExpense.json": { status: 404, body: {} },
+      "NetIncomeLoss.json": { status: 404, body: {} },
+      "EarningsPerShareBasic.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+    expect(result.status).toBe("unavailable"); // no genuinely-annual revenue at all
+  });
+
+  it("accepts a normal ~365-day annual period", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 200, body: factsBody("USD", [
+        { start: "2025-01-01", end: "2025-12-31", val: 100, fy: 2025, fp: "FY", form: "10-K", filed: "2026-01-15" },
+      ]) },
+      "RevenueFromContractWithCustomerExcludingAssessedTax.json": { status: 404, body: {} },
+      "NetIncomeLoss.json": { status: 404, body: {} },
+      "EarningsPerShareBasic.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+    expect(result.status).toBe("available");
+    expect(result.data!.find((i) => i.metricName === "revenue")?.rawValue).toBe(100);
+  });
+
+  it("accepts a legitimate 52/53-week fiscal year (e.g. ~371 days)", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 200, body: factsBody("USD", [
+        { start: "2024-09-30", end: "2025-10-05", val: 100, fy: 2025, fp: "FY", form: "10-K", filed: "2025-11-15" }, // 371 days, a real 53-week year
+      ]) },
+      "RevenueFromContractWithCustomerExcludingAssessedTax.json": { status: 404, body: {} },
+      "NetIncomeLoss.json": { status: 404, body: {} },
+      "EarningsPerShareBasic.json": { status: 404, body: {} },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+    expect(result.status).toBe("available");
+    expect(result.data!.find((i) => i.metricName === "revenue")?.rawValue).toBe(100);
+  });
+
+  it("restatement selection (most-recently-filed wins) still applies after span filtering", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "us-gaap/Revenues.json": { status: 404, body: {} },
+      "RevenueFromContractWithCustomerExcludingAssessedTax.json": { status: 404, body: {} },
+      "NetIncomeLoss.json": { status: 404, body: {} },
+      "EarningsPerShareBasic.json": {
+        status: 200,
+        body: factsBody("USD/shares", [
+          // A short, non-annual fact sharing the same end date — must be
+          // excluded from consideration entirely, not just outvoted.
+          { start: "2024-10-29", end: "2025-01-26", val: 999, fy: 2025, fp: "FY", form: "10-K", filed: "2025-03-01" },
+          // The two genuinely-annual candidates for the same period — the
+          // later-filed (restated) one must still win.
+          { start: "2024-01-29", end: "2025-01-26", val: 12.05, fy: 2024, fp: "FY", form: "10-K", filed: "2024-02-21" },
+          { start: "2024-01-29", end: "2025-01-26", val: 1.21, fy: 2025, fp: "FY", form: "10-K", filed: "2025-02-26" },
+        ]),
+      },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getIncomeStatement({ ticker: "NVDA" }, "ANNUAL");
+    const epsItems = result.data!.filter((i) => i.metricName === "eps" && i.periodEnd === "2025-01-26");
+    expect(epsItems).toHaveLength(1);
+    expect(epsItems[0]!.rawValue).toBe(1.21); // restated value wins, not 12.05 and not the 999 stub
   });
 });
 
