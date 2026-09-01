@@ -21,8 +21,13 @@
 // against real SEC data):
 //   - No single revenue tag works for every company — NVDA/JPM/KO use
 //     us-gaap:Revenues; AAPL/MSFT use
-//     us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax. Try both,
-//     in that order, per concept-fallback list below.
+//     us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax. Both are
+//     attempted (see REVENUE_CONCEPTS below); the concept whose annual
+//     series is most CURRENT is selected (Milestone 9B) — a company that
+//     migrated tags around ASC 606 adoption (~2018) can still have old,
+//     frozen facts under its former concept years later (confirmed live for
+//     AAPL/MSFT/META/CSCO/AMAT/HON/UNP/HD/AVGO/WFC/MS), so "has any annual
+//     data" is not sufficient — see fetchAnnualRevenue().
 //   - The SAME period can appear in multiple filings (as "current year" in
 //     one 10-K, then again as the prior-year comparative in the next one) —
 //     sometimes with a DIFFERENT value (NVDA's FY2024 EPS: 12.05 as
@@ -174,17 +179,41 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     return { ok: true, factsByPeriodEnd };
   }
 
-  /** Revenue-only: tries REVENUE_CONCEPTS in order, returns the first one
-   *  that yields any real annual data. Never assumes one tag works for
-   *  every company (Milestone 7A, C1). */
+  /** Revenue-only: fetches EVERY concept in REVENUE_CONCEPTS (does not stop
+   *  at the first one with any annual data) and selects whichever concept's
+   *  annual series is most CURRENT — i.e. has the latest period end. Never
+   *  assumes one tag works for every company (Milestone 7A, C1), and never
+   *  assumes the first concept with *any* historical data is the *right*
+   *  concept (Milestone 9B): a company that migrated off `Revenues` around
+   *  ASC 606 adoption (~2018) can still have old, frozen `Revenues` facts
+   *  years after switching to `RevenueFromContractWithCustomerExcludingAssessedTax`
+   *  for its actual current filings — confirmed live for
+   *  AAPL/MSFT/META/CSCO/AMAT/HON/UNP/HD/AVGO/WFC/MS. Selection is entirely
+   *  data-driven from the facts SEC actually returns — no ticker-specific
+   *  logic. */
   private async fetchAnnualRevenue(cik: string): Promise<{ ok: true; concept: string; factsByPeriodEnd: Map<string, SecFact> } | { ok: false; reason: string }> {
     const reasons: string[] = [];
+    const candidates: Array<{ concept: string; factsByPeriodEnd: Map<string, SecFact>; latestPeriodEnd: string }> = [];
+
     for (const concept of REVENUE_CONCEPTS) {
       const result = await this.fetchAnnualConcept(cik, concept, "USD");
-      if (result.ok) return { ok: true, concept, factsByPeriodEnd: result.factsByPeriodEnd };
-      reasons.push(result.reason);
+      if (!result.ok) {
+        reasons.push(result.reason);
+        continue;
+      }
+      const latestPeriodEnd = [...result.factsByPeriodEnd.keys()].sort().at(-1)!;
+      candidates.push({ concept, factsByPeriodEnd: result.factsByPeriodEnd, latestPeriodEnd });
     }
-    return { ok: false, reason: reasons.join(" ") };
+
+    if (candidates.length === 0) {
+      return { ok: false, reason: reasons.join(" ") };
+    }
+
+    // Most current series wins, regardless of REVENUE_CONCEPTS order — a
+    // concept with only stale historical facts must never shadow a concept
+    // whose annual series actually extends to the present.
+    const best = candidates.reduce((a, b) => (b.latestPeriodEnd > a.latestPeriodEnd ? b : a));
+    return { ok: true, concept: best.concept, factsByPeriodEnd: best.factsByPeriodEnd };
   }
 
   async getIncomeStatement(ref: ProviderCompanyRef, periodType: PeriodType): Promise<ProviderResult<RawLineItem[]>> {

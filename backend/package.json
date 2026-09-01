@@ -23,6 +23,7 @@
     "milestone8e:preflight": "ts-node --transpile-only src/localDev/milestone8ePreflightAndProviderOnly.ts",
     "milestone8e:ingest": "ts-node --transpile-only src/localDev/milestone8eIngestionAndVerify.ts",
     "milestone9a:sec-check": "ts-node --transpile-only src/localDev/milestone9aSecCoverageCheck.ts",
+    "milestone9b:live-verify": "ts-node --transpile-only src/localDev/milestone9bLiveVerify.ts",
     "build": "tsc -p tsconfig.json",
     "migrate": "echo 'Run schema/*.sql in order against your Postgres/Supabase instance (e.g. psql $DATABASE_URL -f schema/001_core_tables.sql ...)'"
   },
