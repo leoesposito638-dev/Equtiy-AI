@@ -144,36 +144,100 @@ export function buildSupabaseScoringRepo(): ScoringRepo {
       return { score: data.score as number, calculatedAt: data.calculated_at as string };
     },
 
-    // Implemented for interface completeness — NOT exercised in Milestone
-    // 4A. No code path in this milestone calls calculateFundamentalScore(),
-    // so this never runs; it exists so the repo is genuinely ready for the
-    // (separate, future, explicitly-approved) milestone that does.
+    // Milestone 12C: persistence is idempotent and coverage-filtered.
+    //
+    // - category_scores: a category with coverage=0 has no scored data at
+    //   all (no rule had enough data to contribute) — it is "not yet
+    //   scored," not a real score of 0, and must never be written as a row.
+    //   Only categories with coverage > 0 are persisted.
+    // - Neither table has a DB-level unique constraint (unlike the sibling
+    //   calculated_metrics table's uq_calculated_metrics), so idempotency is
+    //   enforced at the application level — the same query-existing-then-
+    //   write pattern already used elsewhere in this codebase
+    //   (getExistingObservationKeys, getExistingCalculatedMetricKeys). The
+    //   natural key mirrors uq_calculated_metrics minus period_end (these
+    //   are point-in-time snapshots, not per-period facts):
+    //   (company_id, calculation_version) for fundamental_scores and
+    //   (company_id, category_id, calculation_version) for category_scores.
+    //   Re-running with unchanged inputs updates the existing row in place
+    //   instead of inserting a duplicate; a changed score correctly
+    //   replaces the stored value.
     async storeFundamentalScore(result: FundamentalScore) {
-      const { data: scoreRow, error: scoreError } = await db
-        .from("fundamental_scores")
-        .insert({
-          company_id: result.companyId,
-          score: result.score,
-          confidence: result.confidence,
-          data_coverage: result.dataCoverage,
-          calculation_version: result.calculationVersion,
-          previous_score: result.previousScore,
-          score_change: result.scoreChange,
-        })
-        .select("id")
-        .single();
-      if (scoreError || !scoreRow) throw new Error(`fundamental_scores insert failed: ${scoreError?.message ?? "no row returned"}`);
+      const fundamentalPayload = {
+        company_id: result.companyId,
+        score: result.score,
+        confidence: result.confidence,
+        data_coverage: result.dataCoverage,
+        calculation_version: result.calculationVersion,
+        previous_score: result.previousScore,
+        score_change: result.scoreChange,
+        calculated_at: result.calculatedAt,
+      };
 
-      for (const cs of result.categoryScores) {
-        const { error: catError } = await db.from("category_scores").insert({
+      const { data: existingFundamental, error: existingFundamentalError } = await db
+        .from("fundamental_scores")
+        .select("id, calculated_at")
+        .eq("company_id", result.companyId)
+        .eq("calculation_version", result.calculationVersion)
+        .order("calculated_at", { ascending: false })
+        .limit(1);
+      if (existingFundamentalError) {
+        throw new Error(`fundamental_scores lookup failed: ${existingFundamentalError.message}`);
+      }
+
+      if (existingFundamental && existingFundamental.length > 0) {
+        const { error } = await db
+          .from("fundamental_scores")
+          .update(fundamentalPayload)
+          .eq("id", (existingFundamental[0] as { id: string }).id);
+        if (error) throw new Error(`fundamental_scores update failed: ${error.message}`);
+      } else {
+        const { error } = await db.from("fundamental_scores").insert(fundamentalPayload);
+        if (error) throw new Error(`fundamental_scores insert failed: ${error.message}`);
+      }
+
+      const scoredCategories = result.categoryScores.filter((cs) => cs.coverage > 0);
+      if (scoredCategories.length === 0) return;
+
+      const { data: existingCategoryRows, error: existingCategoryError } = await db
+        .from("category_scores")
+        .select("id, category_id, calculated_at")
+        .eq("company_id", result.companyId)
+        .eq("calculation_version", result.calculationVersion)
+        .in(
+          "category_id",
+          scoredCategories.map((cs) => cs.categoryId)
+        );
+      if (existingCategoryError) {
+        throw new Error(`category_scores lookup failed: ${existingCategoryError.message}`);
+      }
+
+      const latestByCategoryId = new Map<string, { id: string; calculated_at: string }>();
+      for (const row of (existingCategoryRows ?? []) as Array<{ id: string; category_id: string; calculated_at: string }>) {
+        const current = latestByCategoryId.get(row.category_id);
+        if (!current || row.calculated_at > current.calculated_at) {
+          latestByCategoryId.set(row.category_id, { id: row.id, calculated_at: row.calculated_at });
+        }
+      }
+
+      for (const cs of scoredCategories) {
+        const payload = {
           company_id: result.companyId,
           category_id: cs.categoryId,
           score: cs.score,
           confidence: cs.confidence,
           coverage: cs.coverage,
           calculation_version: cs.calculationVersion,
-        });
-        if (catError) throw new Error(`category_scores insert failed for ${cs.categoryKey}: ${catError.message}`);
+          calculated_at: cs.calculatedAt,
+        };
+        const existing = latestByCategoryId.get(cs.categoryId);
+        if (existing) {
+          const { error } = await db.from("category_scores").update(payload).eq("id", existing.id);
+          if (error) throw new Error(`category_scores update failed for ${cs.categoryKey}: ${error.message}`);
+        } else {
+          const { error } = await db.from("category_scores").insert(payload);
+          if (error) throw new Error(`category_scores insert failed for ${cs.categoryKey}: ${error.message}`);
+        }
       }
     },
   };
