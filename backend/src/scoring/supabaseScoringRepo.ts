@@ -67,11 +67,15 @@ const MAX_HISTORY_PERIODS = 20;
  *  computed — no invested-capital methodology exists in this repository,
  *  see Milestone 12B/12D reports) — this correctly yields no data rather
  *  than being special-cased, exactly like any other genuinely missing
- *  metric. */
+ *  metric. Milestone 13C added debt_trend -> total_debt and
+ *  net_debt_trend -> net_debt, the same pattern applied to the debt-derived
+ *  metrics newly computed in fundamentalRatios.ts. */
 const TREND_METRIC_SOURCE: Record<string, string> = {
   margin_trend: "net_margin",
   gross_margin_stability: "gross_margin",
   roic_persistence: "roic",
+  debt_trend: "total_debt",
+  net_debt_trend: "net_debt",
 };
 
 export function buildSupabaseScoringRepo(): ScoringRepo {

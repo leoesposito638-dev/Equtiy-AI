@@ -16,8 +16,28 @@ import { CALCULATION_VERSION } from "./metrics";
 import {
   computeNetMargin, computeGrossMargin, computeOperatingMargin, computeRoe,
   computeCurrentRatio, computeInterestCoverage, computeFreeCashFlow, computeFcfMargin, computeRdIntensity,
+  computeTotalDebt, computeEbitda, computeNetDebt, computeDebtToEquity, computeNetDebtToEbitda,
   type PeriodValue, type RatioResult,
 } from "./fundamentalRatios";
+
+/** Milestone 13C: companies whose ingested `cash` value is confirmed (via a
+ *  live SEC companyconcept cross-check reproducing the exact "most recent
+ *  period wins" selection secEdgarAdapter.ts's fetchMostCurrentInstantConcept
+ *  already performs — see milestone13cCashConceptCrossCheck.ts) to come from
+ *  CASH_CONCEPTS' fallback tag (CashCashEquivalentsRestrictedCashAnd...),
+ *  which bundles in restricted cash. Net Debt's approved definition
+ *  (Milestone 13B) requires cash-and-equivalents-only, so these companies'
+ *  Net Debt is intentionally left unavailable rather than silently using
+ *  restricted-cash-contaminated cash — never "assume the primary concept was
+ *  used." This is NOT a financial-company carve-out: JPM/BAC are on this
+ *  list, but so are PG and CVX (both non-financial); MA and SCHW are NOT on
+ *  this list (their cash IS clean) but end up unavailable anyway because
+ *  Total Debt itself is unavailable for them. financial_metrics does not
+ *  currently persist which XBRL concept was actually used per row (a
+ *  pre-existing, systemic gap unrelated to this metric — see the Milestone
+ *  13C report), so this list is the smallest architecture-safe way to make
+ *  Net Debt honest without a broader ingestion-pipeline refactor. */
+const CASH_INCLUDES_RESTRICTED_CASH = new Set(["JPM", "BAC", "PG", "CVX"]);
 
 async function getPeriods(companyId: string, metricName: string, periodType: "ANNUAL" | "INSTANT"): Promise<PeriodValue[]> {
   const db = getDbClient();
@@ -79,17 +99,25 @@ export interface FundamentalRatioOutcome {
   skippedReason?: "already_exists" | string;
 }
 
-/** Computes and stores every implementable ratio (Milestone 12B Phase 5) for
- *  one company, across every real period where the required inputs align —
- *  not just the current period, so TREND rules reading these metrics'
- *  history (margin_trend) have real data to work with. Returns an outcome
- *  per (metric, period) actually computed — metrics with no aligned real
- *  data simply produce no outcomes, never a fabricated one. */
-export async function calculateAndStoreFundamentalRatios(companyId: string): Promise<FundamentalRatioOutcome[]> {
+/** Computes and stores every implementable ratio (Milestone 12B Phase 5,
+ *  extended Milestone 13C with debt-derived metrics) for one company, across
+ *  every real period where the required inputs align — not just the current
+ *  period, so TREND rules reading these metrics' history (margin_trend,
+ *  debt_trend, net_debt_trend) have real data to work with. Returns an
+ *  outcome per (metric, period) actually computed — metrics with no aligned
+ *  real data simply produce no outcomes, never a fabricated one.
+ *
+ *  `companyTicker` gates Net Debt's cash input via
+ *  CASH_INCLUDES_RESTRICTED_CASH (Milestone 13C) — required so Net Debt
+ *  never silently uses a restricted-cash-contaminated value; omitting it
+ *  (e.g. for a company outside the known-classified set) safely computes no
+ *  net_debt rather than guessing the cash definition is clean. */
+export async function calculateAndStoreFundamentalRatios(companyId: string, companyTicker?: string): Promise<FundamentalRatioOutcome[]> {
   const [
     netIncome, revenue, grossProfit, operatingIncome, equity,
     currentAssets, currentLiabilities, interestExpense,
     operatingCashFlow, capex, researchDevelopment,
+    cash, longTermDebtCurrent, longTermDebtNoncurrent, shortTermBorrowings, depreciationAmortization,
     existingKeys,
   ] = await Promise.all([
     getPeriods(companyId, "net_income", "ANNUAL"),
@@ -103,10 +131,22 @@ export async function calculateAndStoreFundamentalRatios(companyId: string): Pro
     getPeriods(companyId, "operating_cash_flow", "ANNUAL"),
     getPeriods(companyId, "capex", "ANNUAL"),
     getPeriods(companyId, "research_development", "ANNUAL"),
+    getPeriods(companyId, "cash", "INSTANT"),
+    getPeriods(companyId, "long_term_debt_current", "INSTANT"),
+    getPeriods(companyId, "long_term_debt_noncurrent", "INSTANT"),
+    getPeriods(companyId, "short_term_borrowings", "INSTANT"),
+    getPeriods(companyId, "depreciation_amortization", "ANNUAL"),
     getExistingCalculatedMetricKeys(companyId),
   ]);
 
   const freeCashFlow = computeFreeCashFlow(operatingCashFlow, capex);
+  const totalDebt = computeTotalDebt(longTermDebtCurrent, longTermDebtNoncurrent, shortTermBorrowings);
+  const ebitda = computeEbitda(operatingIncome, depreciationAmortization);
+  const cleanCash = companyTicker && !CASH_INCLUDES_RESTRICTED_CASH.has(companyTicker) ? cash : [];
+  const netDebt = computeNetDebt(
+    totalDebt.map((r) => ({ id: r.sourceObservationIds.join(","), periodEnd: r.periodEnd, value: r.value })),
+    cleanCash
+  );
 
   const allResults: RatioResult[] = [
     ...computeNetMargin(netIncome, revenue),
@@ -118,6 +158,14 @@ export async function calculateAndStoreFundamentalRatios(companyId: string): Pro
     ...freeCashFlow,
     ...computeFcfMargin(freeCashFlow.map((r) => ({ id: r.sourceObservationIds.join(","), periodEnd: r.periodEnd, value: r.value })), revenue),
     ...computeRdIntensity(researchDevelopment, revenue),
+    ...totalDebt,
+    ...ebitda,
+    ...netDebt,
+    ...computeDebtToEquity(totalDebt.map((r) => ({ id: r.sourceObservationIds.join(","), periodEnd: r.periodEnd, value: r.value })), equity),
+    ...computeNetDebtToEbitda(
+      netDebt.map((r) => ({ id: r.sourceObservationIds.join(","), periodEnd: r.periodEnd, value: r.value })),
+      ebitda.map((r) => ({ id: r.sourceObservationIds.join(","), periodEnd: r.periodEnd, value: r.value }))
+    ),
   ];
 
   const outcomes: FundamentalRatioOutcome[] = [];

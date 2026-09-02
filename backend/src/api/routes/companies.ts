@@ -87,7 +87,23 @@ router.get("/:id/scores", async (req, res) => {
   ]);
   if (fundamental.error) return res.status(500).json({ error: fundamental.error.message });
   if (categories.error) return res.status(500).json({ error: categories.error.message });
-  res.json({ data: { fundamental: fundamental.data, categories: categories.data } });
+
+  // Milestone 13C: category_scores can now legitimately hold rows from more
+  // than one calculation_version for the same category (v1.0 history kept
+  // for reproducibility alongside new v1.1 scores — see
+  // schema/007_scoring_config_v1_1.sql). This endpoint has always returned
+  // "one row per category"; that assumption only held before because every
+  // company had exactly one version. Keep only the most recent row per
+  // category_id (the query above already orders by calculated_at desc) so a
+  // rescored company doesn't render two cards for the same category.
+  const seenCategoryIds = new Set<string>();
+  const latestPerCategory = (categories.data ?? []).filter((row: any) => {
+    if (seenCategoryIds.has(row.category_id)) return false;
+    seenCategoryIds.add(row.category_id);
+    return true;
+  });
+
+  res.json({ data: { fundamental: fundamental.data, categories: latestPerCategory } });
 });
 
 router.get("/:id/analysis", async (req, res) => {

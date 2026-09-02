@@ -126,6 +126,29 @@ const TOTAL_LIABILITIES_CONCEPTS = ["Liabilities"];
 const EQUITY_CONCEPTS = ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"];
 const CURRENT_ASSETS_CONCEPTS = ["AssetsCurrent"];
 const CURRENT_LIABILITIES_CONCEPTS = ["LiabilitiesCurrent"];
+/** Milestone 13C: Total Debt = LongTermDebtCurrent + LongTermDebtNoncurrent +
+ *  ShortTermBorrowings (Option B, approved in Milestone 13B — see that
+ *  report for the full options analysis). Deliberately NOT a fallback list:
+ *  Milestone 13C's empirical investigation
+ *  (milestone13cDebtConceptInvestigate.ts) against all 30 demo companies
+ *  found that candidate synonyms (plain "LongTermDebt", "DebtCurrent",
+ *  "OtherShortTermBorrowings") overlap with these three for a majority of
+ *  companies (e.g. 20/30 tag BOTH "LongTermDebt" and the split current/
+ *  noncurrent concepts for the same obligation) — adopting them would
+ *  double-count debt, so they are excluded rather than added "to maximize
+ *  coverage." total_debt is therefore only computed for a company/period
+ *  where all three of these concepts have real data (see
+ *  fundamentalRatios.ts's computeTotalDebt) — never a partial sum, since a
+ *  missing concept cannot be distinguished from "genuinely zero" without
+ *  inventing that assumption. Coverage (13C investigation): 9/30 companies
+ *  have all three (IBM, QCOM, VZ, AMZN, JNJ, LLY, COST, PEP, CVX). JPM/BAC/
+ *  MA/SCHW are naturally excluded — none of the four tag both
+ *  LongTermDebtCurrent and LongTermDebtNoncurrent (a bank's balance sheet
+ *  doesn't decompose debt the way an industrial company's does) — with no
+ *  financial-company-specific code needed. */
+const LONG_TERM_DEBT_CURRENT_CONCEPTS = ["LongTermDebtCurrent"];
+const LONG_TERM_DEBT_NONCURRENT_CONCEPTS = ["LongTermDebtNoncurrent"];
+const SHORT_TERM_BORROWINGS_CONCEPTS = ["ShortTermBorrowings"];
 // NOTE: shares_outstanding (needed for share_count_trend/share_dilution_trend)
 // was investigated and NOT implemented — see file-level STOP note below
 // fetchMostCurrentInstantConcept. us-gaap:CommonStockSharesOutstanding was
@@ -134,12 +157,19 @@ const CURRENT_LIABILITIES_CONCEPTS = ["LiabilitiesCurrent"];
 // cover-page tag instead, a materially different namespace/mechanism this
 // adapter does not use — per Milestone 12B Phase 6, documenting this rather
 // than inventing a partial/unreliable solution.
-// NOTE: total_debt / net_debt were investigated and NOT implemented — there
-// is no single standard XBRL concept for "total debt" (companies decompose
-// it across LongTermDebtNoncurrent/LongTermDebtCurrent/ShortTermBorrowings/
-// finance leases inconsistently); summing an arbitrary subset would invent a
-// debt-aggregation methodology not present anywhere in this repository. See
-// the Milestone 12B report for the full reasoning.
+// NOTE: total_debt / net_debt were investigated in Milestone 12B and left
+// NOT implemented — there is no single standard XBRL concept for "total
+// debt" and summing an arbitrary subset would have invented a debt-
+// aggregation methodology not present anywhere in this repository. Milestone
+// 13B's product-decision process resolved this ambiguity (Option B: LT debt
+// current + LT debt noncurrent + short-term borrowings, explicitly excluding
+// operating leases and any concept not empirically verified), and Milestone
+// 13C implements it — see LONG_TERM_DEBT_CURRENT_CONCEPTS et al. above and
+// fundamentalRatios.ts's computeTotalDebt/computeNetDebt. Finance leases are
+// NOT included: they are not unambiguously part of the three adopted
+// concepts for any company in the 30-company universe (verified empirically
+// during 13C), so including them would require a separate, not-yet-approved
+// aggregation the same way the excluded synonyms above would.
 
 /** A genuinely annual fact's start/end span should be about one year.
  *  Milestone 9D: SEC facts carrying form="10-K" && fp="FY" are NOT
@@ -516,13 +546,19 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     }
     const cik = cikResult.cik;
 
-    const [cash, totalAssets, totalLiabilities, equity, currentAssets, currentLiabilities] = await Promise.all([
+    const [
+      cash, totalAssets, totalLiabilities, equity, currentAssets, currentLiabilities,
+      longTermDebtCurrent, longTermDebtNoncurrent, shortTermBorrowings,
+    ] = await Promise.all([
       this.fetchMostCurrentInstantConcept(cik, CASH_CONCEPTS, "USD"),
       this.fetchMostCurrentInstantConcept(cik, TOTAL_ASSETS_CONCEPTS, "USD"),
       this.fetchMostCurrentInstantConcept(cik, TOTAL_LIABILITIES_CONCEPTS, "USD"),
       this.fetchMostCurrentInstantConcept(cik, EQUITY_CONCEPTS, "USD"),
       this.fetchMostCurrentInstantConcept(cik, CURRENT_ASSETS_CONCEPTS, "USD"),
       this.fetchMostCurrentInstantConcept(cik, CURRENT_LIABILITIES_CONCEPTS, "USD"),
+      this.fetchMostCurrentInstantConcept(cik, LONG_TERM_DEBT_CURRENT_CONCEPTS, "USD"),
+      this.fetchMostCurrentInstantConcept(cik, LONG_TERM_DEBT_NONCURRENT_CONCEPTS, "USD"),
+      this.fetchMostCurrentInstantConcept(cik, SHORT_TERM_BORROWINGS_CONCEPTS, "USD"),
     ]);
 
     const unavailableReasons: string[] = [];
@@ -563,6 +599,9 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     collect("equity", "sec.us-gaap.equity", equity);
     collect("current_assets", "sec.us-gaap.current_assets", currentAssets);
     collect("current_liabilities", "sec.us-gaap.current_liabilities", currentLiabilities);
+    collect("long_term_debt_current", "sec.us-gaap.long_term_debt_current", longTermDebtCurrent);
+    collect("long_term_debt_noncurrent", "sec.us-gaap.long_term_debt_noncurrent", longTermDebtNoncurrent);
+    collect("short_term_borrowings", "sec.us-gaap.short_term_borrowings", shortTermBorrowings);
 
     if (lineItems.length === 0 || !mostRecentFact) {
       return {

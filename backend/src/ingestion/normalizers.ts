@@ -21,6 +21,7 @@ const INCOME_STATEMENT_METRICS = new Set([
 const BALANCE_SHEET_METRICS = new Set([
   "cash", "total_debt", "net_debt", "total_assets", "total_liabilities", "equity",
   "current_assets", "current_liabilities", // Milestone 12B
+  "long_term_debt_current", "long_term_debt_noncurrent", "short_term_borrowings", // Milestone 13C
 ]);
 const CASH_FLOW_METRICS = new Set([
   "operating_cash_flow", "capex", "free_cash_flow",

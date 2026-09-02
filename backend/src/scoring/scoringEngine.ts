@@ -25,7 +25,13 @@ import type { CategoryScore, FundamentalScore, MetricBenchmark, ScoreCategory, S
 import { scoreCategory } from "./categoryScorers/scoreCategory";
 import type { MetricInput } from "./categoryScorers/types";
 
-export const SCORING_VERSION = "v1.0";
+// Milestone 13C: bumped to v1.1 (gross_margin_stability/roic_persistence's
+// minimum_data_points 5 -> 4 — see schema/007_scoring_config_v1_1.sql).
+// Every other rule is identical to v1.0. Past scores calculated under v1.0
+// remain in the database, tagged calculation_version='v1.0', and stay
+// reproducible; this constant only controls which version NEW scoring runs
+// use (repo.getActiveRules(SCORING_VERSION) below).
+export const SCORING_VERSION = "v1.1";
 
 export interface ScoringRepo {
   getActiveCategories(): Promise<ScoreCategory[]>;

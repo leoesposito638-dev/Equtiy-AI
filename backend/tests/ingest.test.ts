@@ -205,4 +205,49 @@ describe("ingestBalanceSheet / ingestCashFlow (Milestone 12B) — same shared fl
     expect(result.rejected).toBe(0);
     expect(result.issues[0]?.issues[0]?.message).toContain("not implemented");
   });
+
+  // Milestone 13C regression test: ingestBalanceSheet is called with the
+  // conceptual periodType "ANNUAL" ("balance sheet as of fiscal year end")
+  // but every line item it returns is actually stored as periodType
+  // "INSTANT" (point-in-time facts, not duration facts) — see
+  // secEdgarAdapter.ts's getBalanceSheet comment. Before this milestone,
+  // ingestStatement's raw-dedupe lookup used the outer "ANNUAL" parameter
+  // instead of the items' own "INSTANT" periodType, so
+  // getExistingObservationKeys always queried for the wrong period_type and
+  // came back empty — meaning every re-run of ingestBalanceSheet silently
+  // re-inserted duplicate raw_financial_data rows forever. This was only
+  // caught in Milestone 13C because it was the first time anyone re-ran
+  // balance-sheet ingestion for an already-ingested company. This test
+  // pins the fix: a second identical ingestBalanceSheet run must reject
+  // everything as a duplicate, not accept it again.
+  it("re-running ingestBalanceSheet a second time rejects every item as a duplicate, rather than re-accepting INSTANT facts (Milestone 13C fix)", async () => {
+    const { repo } = fakeRepo();
+    const provider = fakeProvider("SEC EDGAR", "SEC", [], {
+      balanceSheet: [
+        item({ metricName: "cash", periodType: "INSTANT", periodEnd: "2025-12-31" }),
+        item({ metricName: "total_assets", periodType: "INSTANT", periodEnd: "2025-12-31" }),
+      ],
+    });
+
+    const first = await ingestBalanceSheet("company-1", REF, "USD", "ANNUAL", provider, repo);
+    expect(first.accepted).toBe(2);
+    expect(first.rejected).toBe(0);
+
+    const second = await ingestBalanceSheet("company-1", REF, "USD", "ANNUAL", provider, repo);
+    expect(second.accepted).toBe(0);
+    expect(second.rejected).toBe(2);
+    expect(second.issues.flatMap((i) => i.issues).every((i) => i.code === "DUPLICATE_OBSERVATION")).toBe(true);
+  });
+
+  it("ingestIncomeStatement (ANNUAL duration facts, requested periodType already matches stored periodType) is unaffected by the 13C fix — still dedupes correctly on re-run", async () => {
+    const { repo } = fakeRepo();
+    const provider = fakeProvider("SEC EDGAR", "SEC", [item({ metricName: "revenue", periodType: "ANNUAL" })]);
+
+    const first = await ingestIncomeStatement("company-1", REF, "USD", "ANNUAL", provider, repo);
+    expect(first.accepted).toBe(1);
+
+    const second = await ingestIncomeStatement("company-1", REF, "USD", "ANNUAL", provider, repo);
+    expect(second.accepted).toBe(0);
+    expect(second.rejected).toBe(1);
+  });
 });

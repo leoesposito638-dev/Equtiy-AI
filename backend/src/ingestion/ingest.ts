@@ -136,7 +136,25 @@ async function ingestStatement(
 
   // Milestone 8D Stage 1: scoped to THIS provider only — a different
   // provider's observation for the same metric/period is not a duplicate.
-  const existingKeys = await repo.getExistingObservationKeys(companyId, periodType, response.source.providerName);
+  //
+  // Milestone 13C fix: dedupe must be scoped to the STORED periodType, not
+  // the outer conceptual `periodType` parameter this function was called
+  // with. For getIncomeStatement/getCashFlow they're the same ("ANNUAL"
+  // requested, "ANNUAL" duration facts returned), which is why this was
+  // never caught before — but getBalanceSheet is requested as "ANNUAL"
+  // ("the balance sheet as of this company's fiscal year end" — see its own
+  // comment in secEdgarAdapter.ts) while every line item it returns is
+  // actually stored with periodType "INSTANT". Using the outer "ANNUAL"
+  // param here queried raw_financial_data for period_type='ANNUAL' rows
+  // that don't exist for balance-sheet facts, so existingKeys was always
+  // empty and every re-run of ingestBalanceSheet silently duplicated every
+  // already-ingested raw fact — a latent bug 12B never exercised (it only
+  // ever ran balance-sheet ingestion once) that Milestone 13C's re-run
+  // exposed. All items from a single provider call share one actual stored
+  // periodType by construction (confirmed for every existing provider
+  // method), so the first item's periodType is authoritative here.
+  const storedPeriodType = response.data[0]?.periodType ?? periodType;
+  const existingKeys = await repo.getExistingObservationKeys(companyId, storedPeriodType, response.source.providerName);
 
   for (const item of response.data) {
     const validation = validateRawLineItem(item, existingKeys);
