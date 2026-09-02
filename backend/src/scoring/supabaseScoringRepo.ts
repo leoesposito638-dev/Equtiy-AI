@@ -51,6 +51,29 @@ function toMetricBenchmark(row: DbMetricBenchmarkRow): MetricBenchmark {
  *  gets silently truncated as more history accumulates over time. */
 const MAX_HISTORY_PERIODS = 20;
 
+/** Milestone 12D: TREND rules that score the trend of an ALREADY-COMPUTED
+ *  metric's own stored history, under a different score_rules metric_name.
+ *  This mapping is not a new formula — it is exactly what
+ *  fundamentalRatios.ts already documents at the top of that file:
+ *  "margin_trend, gross_margin_stability, roic_persistence: these are TREND
+ *  rules over an already-computed metric's OWN stored history (net_margin,
+ *  gross_margin, roic respectively) — scoreCategory.ts's existing generic
+ *  TREND handling already covers them with zero new code, once/if that
+ *  underlying metric has enough stored periods." This map is the missing
+ *  wiring: it redirects which calculated_metrics rows a TREND rule reads,
+ *  while still keying the result under the rule's own metric_name so
+ *  scoreCategory.ts's `ctx.metrics.get(rule.metricName)` finds it.
+ *  roic_persistence maps to "roic", which has no stored rows (roic is not
+ *  computed — no invested-capital methodology exists in this repository,
+ *  see Milestone 12B/12D reports) — this correctly yields no data rather
+ *  than being special-cased, exactly like any other genuinely missing
+ *  metric. */
+const TREND_METRIC_SOURCE: Record<string, string> = {
+  margin_trend: "net_margin",
+  gross_margin_stability: "gross_margin",
+  roic_persistence: "roic",
+};
+
 export function buildSupabaseScoringRepo(): ScoringRepo {
   const db = getDbClient();
 
@@ -74,19 +97,22 @@ export function buildSupabaseScoringRepo(): ScoringRepo {
       // metric's history independently ordered/limited without a more
       // complex batched-and-grouped query.
       for (const metricName of metricNames) {
+        const sourceMetricName = TREND_METRIC_SOURCE[metricName] ?? metricName;
         const { data, error } = await db
           .from("calculated_metrics")
           .select("period_end, value")
           .eq("company_id", companyId)
-          .eq("metric_name", metricName)
+          .eq("metric_name", sourceMetricName)
           .eq("period_type", "ANNUAL")
           .order("period_end", { ascending: false })
           .limit(MAX_HISTORY_PERIODS);
-        if (error) throw new Error(`calculated_metrics query failed for ${metricName}: ${error.message}`);
+        if (error) throw new Error(`calculated_metrics query failed for ${sourceMetricName}: ${error.message}`);
 
         const rows = (data ?? [])
           .filter((r: { value: number | null }) => r.value !== null)
           .map((r: { period_end: string; value: number }) => ({ periodEnd: r.period_end, value: r.value }));
+        // Keyed under the rule's own metricName (not sourceMetricName) so
+        // scoreCategory.ts's ctx.metrics.get(rule.metricName) finds it.
         if (rows.length > 0) map.set(metricName, buildMetricInput(metricName, rows));
       }
       return map;
