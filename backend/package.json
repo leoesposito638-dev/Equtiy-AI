@@ -1,0 +1,42 @@
+{
+  "name": "equity-ai-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Equity AI — database, calculation, scoring, AI-analysis, change-detection, and API layer.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "vitest run",
+    "dev": "ts-node src/api/server.ts",
+    "dev:local": "ts-node --transpile-only src/localDev/server.ts",
+    "test:fmp-nvda": "ts-node --transpile-only src/localDev/testFmpNvidiaRevenue.ts",
+    "calc:growth-nvda": "ts-node --transpile-only src/localDev/calculateNvidiaGrowthMetrics.ts",
+    "verify:scoring-repo-nvda": "ts-node --transpile-only src/localDev/verifyGrowthScoringRepoNvda.ts",
+    "verify:benchmark-infra": "ts-node --transpile-only src/localDev/verifyBenchmarkInfrastructureNvda.ts",
+    "ingest:batch1": "ts-node --transpile-only src/localDev/ingestBatch1Companies.ts",
+    "ingest:batch2": "ts-node --transpile-only src/localDev/ingestBatch2Companies.ts",
+    "provision:batch3-companies": "ts-node --transpile-only src/localDev/provisionBatch3Companies.ts",
+    "ingest:batch3": "ts-node --transpile-only src/localDev/ingestBatch3Companies.ts",
+    "verify:sec-edgar": "ts-node --transpile-only src/localDev/verifySecEdgarAdapter.ts",
+    "verify:resolver-live": "ts-node --transpile-only src/localDev/verifyProviderResolverLive.ts",
+    "milestone8d:dry-run": "ts-node --transpile-only src/localDev/milestone8dDryRunNvda.ts",
+    "milestone8d:real-write": "ts-node --transpile-only src/localDev/milestone8dRealWriteNvda.ts",
+    "milestone8e:preflight": "ts-node --transpile-only src/localDev/milestone8ePreflightAndProviderOnly.ts",
+    "milestone8e:ingest": "ts-node --transpile-only src/localDev/milestone8eIngestionAndVerify.ts",
+    "milestone9a:sec-check": "ts-node --transpile-only src/localDev/milestone9aSecCoverageCheck.ts",
+    "milestone9b:live-verify": "ts-node --transpile-only src/localDev/milestone9bLiveVerify.ts",
+    "build": "tsc -p tsconfig.json",
+    "migrate": "echo 'Run schema/*.sql in order against your Postgres/Supabase instance (e.g. psql $DATABASE_URL -f schema/001_core_tables.sql ...)'"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "express": "^4.19.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}
