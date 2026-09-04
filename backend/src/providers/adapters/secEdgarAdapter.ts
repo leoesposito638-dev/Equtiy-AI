@@ -91,6 +91,27 @@ const OPERATING_INCOME_CONCEPTS = ["OperatingIncomeLoss"];
  *  revenue/net income. */
 const INTEREST_EXPENSE_CONCEPTS = ["InterestExpense", "InterestExpenseDebt"];
 const RD_EXPENSE_CONCEPTS = ["ResearchAndDevelopmentExpense"];
+/** Milestone 13E — approved Milestone 13B/13D methodology. TAX_EXPENSE_CONCEPTS
+ *  is a single concept, empirically verified (Milestone 13D) present with
+ *  real current annual data for all 30 demo companies — no fallback needed.
+ *  PRETAX_INCOME_CONCEPTS' two entries are the approved primary/fallback: two
+ *  true ALTERNATIVE representations of the same continuing-operations
+ *  pretax-income concept (never both real for the same company in practice —
+ *  fetchMostCurrentAnnualConcept's existing "most current wins" selection
+ *  applies, same mechanism already used for revenue/equity/debt), NOT
+ *  additive components. Explicitly excluded per the approved decision: the
+ *  "...Domestic" concept (a domestic-only breakdown, not total pretax
+ *  income — would silently understate earnings for internationally-exposed
+ *  companies; empirically confirmed in Milestone 13D to be the only current
+ *  tag for MCD and ORCL, which is exactly why those two are not substituted
+ *  with it here), any statutory/hardcoded rate, and
+ *  CurrentIncomeTaxExpenseBenefit (a materially different, narrower
+ *  current-portion-only figure, not a fallback for total tax expense). */
+const TAX_EXPENSE_CONCEPTS = ["IncomeTaxExpenseBenefit"];
+const PRETAX_INCOME_CONCEPTS = [
+  "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+  "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+];
 
 /** Duration (cash-flow-statement) facts. EBITDA is NOT a standard GAAP XBRL
  *  concept (no company tags "EBITDA" directly) — it is calculated
@@ -449,7 +470,7 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     }
     const cik = cikResult.cik;
 
-    const [revenue, netIncome, eps, grossProfit, operatingIncome, interestExpense, rdExpense] = await Promise.all([
+    const [revenue, netIncome, eps, grossProfit, operatingIncome, interestExpense, rdExpense, taxExpense, pretaxIncome] = await Promise.all([
       this.fetchAnnualRevenue(cik),
       this.fetchAnnualNetIncome(cik),
       this.fetchAnnualConcept(cik, EPS_CONCEPT, "USD/shares"),
@@ -457,6 +478,8 @@ export class SecEdgarAdapter implements FinancialDataProvider {
       this.fetchMostCurrentAnnualConcept(cik, OPERATING_INCOME_CONCEPTS, "USD"),
       this.fetchMostCurrentAnnualConcept(cik, INTEREST_EXPENSE_CONCEPTS, "USD"),
       this.fetchMostCurrentAnnualConcept(cik, RD_EXPENSE_CONCEPTS, "USD"),
+      this.fetchMostCurrentAnnualConcept(cik, TAX_EXPENSE_CONCEPTS, "USD"),
+      this.fetchMostCurrentAnnualConcept(cik, PRETAX_INCOME_CONCEPTS, "USD"),
     ]);
 
     const unavailableReasons: string[] = [];
@@ -499,6 +522,9 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     collect("operating_income", operatingIncome.ok ? `sec.us-gaap.${operatingIncome.concept}` : "sec.us-gaap.operating_income", "USD", operatingIncome);
     collect("interest_expense", interestExpense.ok ? `sec.us-gaap.${interestExpense.concept}` : "sec.us-gaap.interest_expense", "USD", interestExpense);
     collect("research_development", rdExpense.ok ? `sec.us-gaap.${rdExpense.concept}` : "sec.us-gaap.research_development", "USD", rdExpense);
+    // Milestone 13E additions — same collect(), same per-metric independence.
+    collect("tax_expense", taxExpense.ok ? `sec.us-gaap.${taxExpense.concept}` : "sec.us-gaap.tax_expense", "USD", taxExpense);
+    collect("pretax_income", pretaxIncome.ok ? `sec.us-gaap.${pretaxIncome.concept}` : "sec.us-gaap.pretax_income", "USD", pretaxIncome);
 
     if (lineItems.length === 0 || !mostRecentFact) {
       return {

@@ -17,6 +17,7 @@ export interface FxRate {
 const INCOME_STATEMENT_METRICS = new Set([
   "revenue", "gross_profit", "operating_income", "ebitda", "net_income", "eps",
   "interest_expense", "research_development", // Milestone 12B
+  "tax_expense", "pretax_income", // Milestone 13E
 ]);
 const BALANCE_SHEET_METRICS = new Set([
   "cash", "total_debt", "net_debt", "total_assets", "total_liabilities", "equity",

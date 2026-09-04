@@ -42,6 +42,29 @@ export function roic(
   return (nopat / investedCapital) * 100;
 }
 
+/** Milestone 13E — approved Milestone 13B/13D/13E methodology.
+ *  effectiveTaxRate = IncomeTaxExpenseBenefit / continuing-operations pretax
+ *  income, as a FRACTION (0.21, not 21) — roic()'s `(1 - effectiveTaxRate)`
+ *  term requires this. Only nulls on a missing input or a zero denominator
+ *  (division-safety, matching every other ratio in this file); a negative
+ *  pretax income, a negative tax expense (tax benefit), or a resulting rate
+ *  outside [0,1] are all preserved unclipped — real, disclosed outcomes,
+ *  not data errors (see Milestone 13D's audit for empirical examples). */
+export function effectiveTaxRate(taxExpense: number | null, pretaxIncome: number | null): number | null {
+  if (taxExpense === null || pretaxIncome === null || pretaxIncome === 0) return null;
+  return taxExpense / pretaxIncome;
+}
+
+/** Milestone 13E — approved Milestone 13B methodology: Invested Capital =
+ *  Total Assets − Current Liabilities − Cash. Nulls only when a component is
+ *  missing; a negative or zero result is NOT nulled here (zero is handled by
+ *  roic()'s own division-safety check; negative is preserved and reported,
+ *  never fabricated or floored, per the approved edge-case handling). */
+export function investedCapital(totalAssets: number | null, currentLiabilities: number | null, cash: number | null): number | null {
+  if (totalAssets === null || currentLiabilities === null || cash === null) return null;
+  return totalAssets - currentLiabilities - cash;
+}
+
 export function roe(netIncome: number | null, equity: number | null): number | null {
   if (netIncome === null || equity === null || equity === 0) return null;
   return (netIncome / equity) * 100;

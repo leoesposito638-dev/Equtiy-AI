@@ -46,6 +46,13 @@ const CAN_BE_NEGATIVE = new Set([
   // real companies (e.g. after sustained large buybacks) — this is a known,
   // well-documented accounting reality, not a data error to reject.
   "equity",
+  // Milestone 13E: tax_expense is legitimately negative in a tax-benefit
+  // year (empirically confirmed for IBM/DIS/PFE's most recent filed year,
+  // plus many more historically — Milestone 13D's audit), and pretax_income
+  // is legitimately negative for a company reporting a pretax loss. Neither
+  // is a data error.
+  "tax_expense",
+  "pretax_income",
 ]);
 
 /**

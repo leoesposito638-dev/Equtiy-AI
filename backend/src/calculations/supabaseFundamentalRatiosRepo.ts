@@ -17,6 +17,7 @@ import {
   computeNetMargin, computeGrossMargin, computeOperatingMargin, computeRoe,
   computeCurrentRatio, computeInterestCoverage, computeFreeCashFlow, computeFcfMargin, computeRdIntensity,
   computeTotalDebt, computeEbitda, computeNetDebt, computeDebtToEquity, computeNetDebtToEbitda,
+  computeInvestedCapital, computeEffectiveTaxRate, computeRoic,
   type PeriodValue, type RatioResult,
 } from "./fundamentalRatios";
 
@@ -100,12 +101,14 @@ export interface FundamentalRatioOutcome {
 }
 
 /** Computes and stores every implementable ratio (Milestone 12B Phase 5,
- *  extended Milestone 13C with debt-derived metrics) for one company, across
+ *  extended Milestone 13C with debt-derived metrics, extended Milestone 13E
+ *  with invested_capital/effective_tax_rate/roic) for one company, across
  *  every real period where the required inputs align — not just the current
  *  period, so TREND rules reading these metrics' history (margin_trend,
- *  debt_trend, net_debt_trend) have real data to work with. Returns an
- *  outcome per (metric, period) actually computed — metrics with no aligned
- *  real data simply produce no outcomes, never a fabricated one.
+ *  debt_trend, net_debt_trend, roic_persistence) have real data to work
+ *  with. Returns an outcome per (metric, period) actually computed —
+ *  metrics with no aligned real data simply produce no outcomes, never a
+ *  fabricated one.
  *
  *  `companyTicker` gates Net Debt's cash input via
  *  CASH_INCLUDES_RESTRICTED_CASH (Milestone 13C) — required so Net Debt
@@ -118,6 +121,7 @@ export async function calculateAndStoreFundamentalRatios(companyId: string, comp
     currentAssets, currentLiabilities, interestExpense,
     operatingCashFlow, capex, researchDevelopment,
     cash, longTermDebtCurrent, longTermDebtNoncurrent, shortTermBorrowings, depreciationAmortization,
+    totalAssets, taxExpense, pretaxIncome,
     existingKeys,
   ] = await Promise.all([
     getPeriods(companyId, "net_income", "ANNUAL"),
@@ -136,6 +140,9 @@ export async function calculateAndStoreFundamentalRatios(companyId: string, comp
     getPeriods(companyId, "long_term_debt_noncurrent", "INSTANT"),
     getPeriods(companyId, "short_term_borrowings", "INSTANT"),
     getPeriods(companyId, "depreciation_amortization", "ANNUAL"),
+    getPeriods(companyId, "total_assets", "INSTANT"),
+    getPeriods(companyId, "tax_expense", "ANNUAL"),
+    getPeriods(companyId, "pretax_income", "ANNUAL"),
     getExistingCalculatedMetricKeys(companyId),
   ]);
 
@@ -146,6 +153,17 @@ export async function calculateAndStoreFundamentalRatios(companyId: string, comp
   const netDebt = computeNetDebt(
     totalDebt.map((r) => ({ id: r.sourceObservationIds.join(","), periodEnd: r.periodEnd, value: r.value })),
     cleanCash
+  );
+  // Milestone 13E — Invested Capital deliberately uses the full `cash`
+  // series, not `cleanCash`: the approved formula was never qualified with
+  // Net Debt's cash-and-equivalents-only requirement (see the computeInvestedCapital
+  // doc comment in fundamentalRatios.ts).
+  const investedCapital = computeInvestedCapital(totalAssets, currentLiabilities, cash);
+  const effectiveTaxRate = computeEffectiveTaxRate(taxExpense, pretaxIncome);
+  const roic = computeRoic(
+    operatingIncome,
+    effectiveTaxRate.map((r) => ({ id: r.sourceObservationIds.join(","), periodEnd: r.periodEnd, value: r.value })),
+    investedCapital.map((r) => ({ id: r.sourceObservationIds.join(","), periodEnd: r.periodEnd, value: r.value }))
   );
 
   const allResults: RatioResult[] = [
@@ -166,6 +184,9 @@ export async function calculateAndStoreFundamentalRatios(companyId: string, comp
       netDebt.map((r) => ({ id: r.sourceObservationIds.join(","), periodEnd: r.periodEnd, value: r.value })),
       ebitda.map((r) => ({ id: r.sourceObservationIds.join(","), periodEnd: r.periodEnd, value: r.value }))
     ),
+    ...investedCapital,
+    ...effectiveTaxRate,
+    ...roic,
   ];
 
   const outcomes: FundamentalRatioOutcome[] = [];

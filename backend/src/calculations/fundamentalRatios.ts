@@ -18,21 +18,24 @@
 // they are TREND rules over total_debt's/net_debt's own stored history,
 // wired via supabaseScoringRepo.ts's TREND_METRIC_SOURCE alias map.
 //
+// Milestone 13E added invested_capital, effective_tax_rate, and roic below,
+// per the product-authorized methodology from Milestone 13B/13D (Invested
+// Capital = Total Assets − Current Liabilities − Cash, deliberately NOT
+// dependent on Total Debt; Effective Tax Rate = tax_expense / pretax_income,
+// pretax_income sourced from the approved primary/fallback SEC continuing-
+// operations concepts; ROIC reuses metrics.ts's existing, unmodified roic()
+// formula). roic_persistence needs no new code here: like margin_trend and
+// debt_trend before it, it is a TREND rule over roic's own stored history,
+// already wired via supabaseScoringRepo.ts's TREND_METRIC_SOURCE alias map.
+//
 // Deliberately still NOT implemented here (see Milestone 12B/13A/13B reports
 // for the full reasoning — each remains a genuine STOP, not an oversight):
-//   - roic (both PROFITABILITY and CAPITAL_ALLOCATION): nothing in this
-//     repository defines invested capital or an effective tax rate — both
-//     remain unresolved product decisions (Milestone 13B), not implemented
-//     in Milestone 13C, which was scoped to debt only.
 //   - fcf_reinvestment_rate: no formula for this metric exists anywhere in
 //     the codebase — implementing it would mean inventing both the formula
 //     and its OPTIMAL_RANGE thresholds; still an unresolved product decision.
 //   - share_count_trend, share_dilution_trend: shares outstanding was
 //     investigated (Milestone 12B Phase 6) and found unreliable via this
 //     adapter's mechanism for most companies — see secEdgarAdapter.ts.
-//   - roic_persistence: a TREND rule over roic's own stored history — roic
-//     itself is unresolved (above), so this remains unscoreable regardless
-//     of minimum_data_points.
 //   - margin_trend, gross_margin_stability: TREND rules over an already-
 //     computed metric's OWN stored history (net_margin, gross_margin
 //     respectively) — scoreCategory.ts's existing generic TREND handling
@@ -49,6 +52,9 @@ import {
   freeCashFlow as freeCashFlowOf,
   debtToEquity as debtToEquityOf,
   netDebtToEbitda as netDebtToEbitdaOf,
+  investedCapital as investedCapitalOf,
+  effectiveTaxRate as effectiveTaxRateOf,
+  roic as roicOf,
 } from "./metrics";
 
 export interface PeriodValue {
@@ -191,4 +197,65 @@ export function computeDebtToEquity(totalDebt: PeriodValue[], equity: PeriodValu
 
 export function computeNetDebtToEbitda(netDebt: PeriodValue[], ebitda: PeriodValue[]): RatioResult[] {
   return alignAndCompute("net_debt_to_ebitda", netDebt, ebitda, (nd, eb) => netDebtToEbitdaOf(nd, eb));
+}
+
+/** Three-way counterpart to alignAndCompute, generalized with a formula
+ *  callback (unlike alignAndSum3, which is hardcoded to addition) — produces
+ *  a result for a period only when all three inputs have a real value
+ *  there, same missing-data discipline as every align* helper in this file.
+ *  Milestone 13E: used for Invested Capital (a subtraction) and ROIC (the
+ *  existing metrics.ts roic() formula, unmodified). */
+function alignAndCompute3(
+  metricName: string,
+  a: PeriodValue[],
+  b: PeriodValue[],
+  c: PeriodValue[],
+  formula: (a: number, b: number, c: number) => number | null
+): RatioResult[] {
+  const byPeriodB = new Map(b.filter((x) => x.value !== null).map((x) => [x.periodEnd, x]));
+  const byPeriodC = new Map(c.filter((x) => x.value !== null).map((x) => [x.periodEnd, x]));
+  const results: RatioResult[] = [];
+  for (const x of a) {
+    if (x.value === null) continue;
+    const y = byPeriodB.get(x.periodEnd);
+    const z = byPeriodC.get(x.periodEnd);
+    if (!y || y.value === null || !z || z.value === null) continue;
+    const value = formula(x.value, y.value, z.value);
+    if (value === null) continue;
+    results.push({ metricName, periodEnd: x.periodEnd, value, sourceObservationIds: [x.id, y.id, z.id] });
+  }
+  return results;
+}
+
+/** Invested Capital (Milestone 13E, approved Milestone 13B/13D) =
+ *  Total Assets − Current Liabilities − Cash. Deliberately NOT dependent on
+ *  Total Debt, per the approved decision. Uses the full `cash` series (not
+ *  the CASH_INCLUDES_RESTRICTED_CASH-gated series Net Debt uses) — the
+ *  approved Invested Capital formula, unlike Net Debt, was never qualified
+ *  with a "cash-and-equivalents-only" requirement in Milestone 13B/13D, so
+ *  no cash-cleanliness gate applies here. */
+export function computeInvestedCapital(totalAssets: PeriodValue[], currentLiabilities: PeriodValue[], cash: PeriodValue[]): RatioResult[] {
+  return alignAndCompute3("invested_capital", totalAssets, currentLiabilities, cash, (ta, cl, c) => investedCapitalOf(ta, cl, c));
+}
+
+/** Effective Tax Rate (Milestone 13E, approved Milestone 13B/13D/13E) =
+ *  tax_expense / pretax_income, as a fraction. pretax_income is sourced from
+ *  the primary/fallback SEC concepts wired in secEdgarAdapter.ts — two true
+ *  alternative representations of the same concept (never additive), so a
+ *  plain 2-way align is correct here, same as every other ratio in this
+ *  file. */
+export function computeEffectiveTaxRate(taxExpense: PeriodValue[], pretaxIncome: PeriodValue[]): RatioResult[] {
+  return alignAndCompute("effective_tax_rate", taxExpense, pretaxIncome, (te, pi) => effectiveTaxRateOf(te, pi));
+}
+
+/** ROIC (Milestone 13E, approved Milestone 13B/13D) — the existing,
+ *  unmodified metrics.ts roic() formula, applied only where operating
+ *  income, effective tax rate, and invested capital all have a real value
+ *  for the SAME period_end (no quarterly/stub contamination, no mixing
+ *  fiscal years) — the period-alignment safeguard that naturally leaves
+ *  ORCL unavailable (its only current pretax concept is stale since 2018,
+ *  so effective_tax_rate has no period overlapping operating_income's
+ *  current years) without any company-specific code. */
+export function computeRoic(operatingIncome: PeriodValue[], effectiveTaxRate: PeriodValue[], investedCapital: PeriodValue[]): RatioResult[] {
+  return alignAndCompute3("roic", operatingIncome, effectiveTaxRate, investedCapital, (oi, etr, ic) => roicOf(oi, etr, ic));
 }

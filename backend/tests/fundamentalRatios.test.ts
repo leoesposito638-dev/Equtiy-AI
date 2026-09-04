@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeNetMargin, computeGrossMargin, computeOperatingMargin, computeRoe,
   computeCurrentRatio, computeInterestCoverage, computeFreeCashFlow, computeFcfMargin, computeRdIntensity,
+  computeInvestedCapital, computeEffectiveTaxRate, computeRoic,
   type PeriodValue,
 } from "../src/calculations/fundamentalRatios";
 
@@ -106,5 +107,80 @@ describe("computeRdIntensity", () => {
 
   it("a company that does not disclose R&D (e.g. a restaurant chain) yields nothing — real, expected absence, not fabricated as 0", () => {
     expect(computeRdIntensity([], [p("rev-1", "2025-12-31", 200)])).toEqual([]);
+  });
+});
+
+// Milestone 13E — invested_capital, effective_tax_rate, roic.
+describe("computeInvestedCapital", () => {
+  it("computes Total Assets - Current Liabilities - Cash for every fully-aligned period", () => {
+    const ta = [p("ta-1", "2025-12-31", 1000), p("ta-2", "2024-12-31", 900)];
+    const cl = [p("cl-1", "2025-12-31", 200), p("cl-2", "2024-12-31", 180)];
+    const cash = [p("c-1", "2025-12-31", 100), p("c-2", "2024-12-31", 90)];
+    const results = computeInvestedCapital(ta, cl, cash);
+    expect(results).toHaveLength(2);
+    expect(results.find((r) => r.periodEnd === "2025-12-31")!.value).toBe(700);
+  });
+
+  it("produces no result for a period missing any one of the three components (e.g. JPM's missing current_liabilities)", () => {
+    const ta = [p("ta-1", "2025-12-31", 1000)];
+    const cl: PeriodValue[] = []; // e.g. JPM — banks don't tag current_liabilities
+    const cash = [p("c-1", "2025-12-31", 100)];
+    expect(computeInvestedCapital(ta, cl, cash)).toEqual([]);
+  });
+
+  it("preserves a negative result — never fabricated or floored", () => {
+    const ta = [p("ta-1", "2025-12-31", 100)];
+    const cl = [p("cl-1", "2025-12-31", 500)];
+    const cash = [p("c-1", "2025-12-31", 100)];
+    const results = computeInvestedCapital(ta, cl, cash);
+    expect(results[0]!.value).toBe(-500);
+  });
+});
+
+describe("computeEffectiveTaxRate", () => {
+  it("computes tax_expense / pretax_income as a fraction for every aligned period", () => {
+    const te = [p("te-1", "2025-12-31", 210)];
+    const pi = [p("pi-1", "2025-12-31", 1000)];
+    const results = computeEffectiveTaxRate(te, pi);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.value).toBeCloseTo(0.21, 4);
+  });
+
+  it("preserves a negative rate from a tax benefit — never clipped to 0", () => {
+    const te = [p("te-1", "2025-12-31", -242)];
+    const pi = [p("pi-1", "2025-12-31", 1000)];
+    expect(computeEffectiveTaxRate(te, pi)[0]!.value).toBeCloseTo(-0.242, 4);
+  });
+
+  it("ORCL-style misalignment: a stale pretax-income period (no overlap with current tax_expense years) yields nothing for the current periods", () => {
+    const te = [p("te-1", "2026-05-31", 2467), p("te-2", "2025-05-31", 1717)]; // current
+    const pi = [p("pi-1", "2018-05-31", 12891), p("pi-2", "2017-05-31", 11517)]; // stale
+    expect(computeEffectiveTaxRate(te, pi)).toEqual([]);
+  });
+});
+
+describe("computeRoic", () => {
+  it("computes ROIC only where operating_income, effective_tax_rate, and invested_capital all align on the same period_end", () => {
+    const oi = [p("oi-1", "2025-12-31", 1000), p("oi-2", "2024-12-31", 900)];
+    const etr = [p("etr-1", "2025-12-31", 0.2)]; // only one period of tax-rate data
+    const ic = [p("ic-1", "2025-12-31", 5000), p("ic-2", "2024-12-31", 4500)];
+    const results = computeRoic(oi, etr, ic);
+    expect(results).toHaveLength(1); // 2024-12-31 dropped — no aligned effective_tax_rate
+    expect(results[0]!.periodEnd).toBe("2025-12-31");
+    expect(results[0]!.value).toBeCloseTo(16, 4); // NOPAT=800, /5000*100=16
+  });
+
+  it("MCD-style total unavailability: zero effective_tax_rate periods at all yields zero ROIC results, never a fabricated one", () => {
+    const oi = [p("oi-1", "2025-12-31", 1000)];
+    const etr: PeriodValue[] = [];
+    const ic = [p("ic-1", "2025-12-31", 5000)];
+    expect(computeRoic(oi, etr, ic)).toEqual([]);
+  });
+
+  it("preserves a negative ROIC when invested capital is negative — never fabricated or floored", () => {
+    const oi = [p("oi-1", "2025-12-31", 1000)];
+    const etr = [p("etr-1", "2025-12-31", 0.2)];
+    const ic = [p("ic-1", "2025-12-31", -5000)];
+    expect(computeRoic(oi, etr, ic)[0]!.value).toBeCloseTo(-16, 4);
   });
 });
