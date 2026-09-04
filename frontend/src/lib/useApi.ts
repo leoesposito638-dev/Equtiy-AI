@@ -76,6 +76,30 @@ export function useCompanyScores(id: string | undefined): AsyncState<ScoresRespo
   );
 }
 
+/** Demo Readiness: Discover needs every company's headline score up front to
+ * rank the grid — a real ranking, not the DB's default (alphabetical) row
+ * order. There's no bulk scores endpoint, so this fetches all of them in
+ * parallel and keys the results by company id; a single failure just leaves
+ * that company's entry out of the map (falls back to unranked), it never
+ * fails the whole page. */
+export function useCompanyScoresMap(companies: Company[] | null): AsyncState<Map<string, ScoresResponse>> {
+  const ids = (companies ?? []).map((c) => c.id).join(",");
+  return useAsync(
+    async () => {
+      const list = companies ?? [];
+      const results = await Promise.allSettled(list.map((c) => api.getCompanyScores(c.id)));
+      const map = new Map<string, ScoresResponse>();
+      results.forEach((r, i) => {
+        const company = list[i];
+        if (r.status === "fulfilled" && company) map.set(company.id, r.value);
+      });
+      return map;
+    },
+    new Map(Object.entries(FIXTURE_SCORES)),
+    [ids]
+  );
+}
+
 export function useCompanyFinancials(id: string | undefined): AsyncState<FinancialMetricRow[]> {
   return useAsync(() => api.getCompanyFinancials(id!), id ? FIXTURE_FINANCIALS[id] ?? [] : [], [id]);
 }

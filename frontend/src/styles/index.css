@@ -14,3 +14,24 @@ button:focus-visible, input:focus-visible, a:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* Demo Readiness fix: a handful of components use Tailwind-style responsive
+   utility class names (hidden/flex/block + sm:/md: prefixes) for the
+   desktop/mobile nav split and a couple of compact-row breakpoints, but this
+   project never actually wired up Tailwind — those classes were dead names
+   with no CSS behind them, so the desktop sidebar and the mobile bottom nav
+   rendered simultaneously at every viewport width. These rules replicate
+   just the specific utilities actually referenced in the codebase, at
+   Tailwind's real sm (640px) / md (768px) breakpoints, mobile-first so the
+   min-width overrides win by source order at larger widths. */
+.hidden { display: none; }
+.flex { display: flex; }
+.block { display: block; }
+@media (min-width: 640px) {
+  .sm\:block { display: block; }
+  .sm\:hidden { display: none; }
+}
+@media (min-width: 768px) {
+  .md\:flex { display: flex; }
+  .md\:hidden { display: none; }
+}

@@ -30,7 +30,7 @@ function categories(scores: Record<string, [number, number, number]>): ScoresRes
     score, confidence, coverage,
     calculation_version: "v1.0",
     calculated_at: "2026-08-24T09:12:00Z",
-    score_categories: { category_key: key as any, name: CATEGORY_NAMES[key] },
+    score_categories: { category_key: key as any, name: CATEGORY_NAMES[key] ?? key },
   }));
 }
 

@@ -5,8 +5,8 @@ import { Card } from "./Primitives";
 import { C } from "../styles/tokens";
 import type { Company } from "../lib/types";
 
-export function DiscoveryCard({ company, onAnalyze, onFollow, followed }: {
-  company: Company; onAnalyze: () => void; onFollow?: () => void; followed?: boolean;
+export function DiscoveryCard({ company, onAnalyze, onFollow, followed, rank }: {
+  company: Company; onAnalyze: () => void; onFollow?: () => void; followed?: boolean; rank?: number;
 }) {
   const { data: scores } = useCompanyScores(company.id);
   const { data: analysis } = useCompanyAnalysis(company.id);
@@ -14,18 +14,32 @@ export function DiscoveryCard({ company, onAnalyze, onFollow, followed }: {
 
   return (
     <Card style={{ padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{company.name}</div>
-          <div style={{ fontSize: 11.5, color: C.textFaint }}>{company.ticker}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, flex: 1, minWidth: 0 }}>
+          {rank !== undefined && (
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textFaint, backgroundColor: C.bg, border: `1px solid ${C.border}`, borderRadius: 999, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
+              {rank}
+            </div>
+          )}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{company.name}</div>
+            <div style={{ fontSize: 11.5, color: C.textFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {company.ticker}
+              {company.sector && <span> · {company.sector}</span>}
+            </div>
+          </div>
         </div>
-        <div style={{ textAlign: "right" }}>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
           <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{headline?.score ?? "—"}</div>
-          {headline && <div style={{ fontSize: 10, color: C.textFaint }}>{headline.label}</div>}
+          {headline ? (
+            <div style={{ fontSize: 10, color: C.textFaint }}>{headline.label}</div>
+          ) : (
+            <div style={{ fontSize: 10, color: C.textFaint }}>Not yet scored</div>
+          )}
         </div>
       </div>
       <p style={{ fontSize: 12.5, color: C.textSoft, margin: 0, lineHeight: 1.5, minHeight: 38 }}>
-        {analysis?.thesis?.thesis ?? "Analysis not yet available for this company."}
+        {analysis?.thesis?.thesis ?? "AI thesis not yet available — coming soon."}
       </p>
       <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
         <button onClick={onAnalyze} style={{ flex: 1, padding: "8px 0", borderRadius: 8, border: `1px solid ${C.border}`, backgroundColor: C.surface, color: C.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>

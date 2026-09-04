@@ -1,48 +1,45 @@
-import React, { useState } from "react";
+import React from "react";
 import { useNavigate } from "react-router-dom";
-import { useCompanies } from "../lib/useApi";
+import { useCompanies, useCompanyScoresMap } from "../lib/useApi";
 import { useFollowed } from "../lib/followedContext";
+import { primaryScore } from "../lib/primaryScore";
 import { DiscoveryCard } from "../components/DiscoveryCard";
 import { PageHeader, SectionLabel } from "../components/Primitives";
 import { ErrorBlock, LoadingBlock } from "../components/States";
-import { C } from "../styles/tokens";
-
-const DISCOVERY_CATEGORIES = ["Strong Growth", "Improving Fundamentals", "High Quality", "Attractive Valuation", "Strong Financial Health"];
 
 export default function DiscoverPage() {
   const { data: companies, loading, error } = useCompanies();
+  const { data: scoresMap, loading: scoresLoading } = useCompanyScoresMap(companies);
   const { followed, toggle } = useFollowed();
   const navigate = useNavigate();
-  const [activeCat, setActiveCat] = useState<string | null>(null);
 
-  if (loading) return <LoadingBlock label="Loading companies…" />;
+  if (loading || scoresLoading) return <LoadingBlock label="Loading companies…" />;
   if (error) return <ErrorBlock message={error} />;
   if (!companies) return null;
 
-  const candidates = companies.filter((c) => !followed.has(c.id));
+  // Ranked by Fundamental Score (real score when available, falling back to
+  // the same primaryScore logic every score display in the app uses) — a
+  // company with no score yet sorts to the bottom rather than being hidden.
+  const ranked = [...companies].sort((a, b) => {
+    const sa = primaryScore(scoresMap?.get(a.id))?.score ?? -1;
+    const sb = primaryScore(scoresMap?.get(b.id))?.score ?? -1;
+    return sb - sa;
+  });
 
   return (
-    <div style={{ maxWidth: 900 }}>
-      <PageHeader title="Discover" subtitle="Companies Equity AI thinks are interesting right now." />
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 28 }}>
-        {DISCOVERY_CATEGORIES.map((catName) => {
-          const active = activeCat === catName;
-          return (
-            <button key={catName} onClick={() => setActiveCat(active ? null : catName)} style={{ padding: "7px 14px", borderRadius: 999, fontSize: 12.5, fontWeight: 600, cursor: "pointer", border: `1px solid ${active ? C.accent : C.border}`, backgroundColor: active ? C.accent : C.surface, color: active ? C.surface : C.textSoft }}>
-              {catName}
-            </button>
-          );
-        })}
-      </div>
-      {activeCat && (
-        <p style={{ fontSize: 12, color: C.textFaint, marginTop: -18, marginBottom: 20 }}>
-          Category filtering surfaces here once the backend's peer-percentile categorization is wired up — showing all uncovered companies for now.
-        </p>
-      )}
-      <SectionLabel>Interesting right now</SectionLabel>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12 }}>
-        {candidates.map((c) => (
-          <DiscoveryCard key={c.id} company={c} followed={followed.has(c.id)} onFollow={() => toggle(c.id)} onAnalyze={() => navigate(`/company/${c.id}`)} />
+    <div style={{ maxWidth: 960 }}>
+      <PageHeader title="Discover" subtitle={`Ranked by Fundamental Score across the ${companies.length}-company demo universe.`} />
+      <SectionLabel>All companies</SectionLabel>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
+        {ranked.map((c, i) => (
+          <DiscoveryCard
+            key={c.id}
+            rank={i + 1}
+            company={c}
+            followed={followed.has(c.id)}
+            onFollow={() => toggle(c.id)}
+            onAnalyze={() => navigate(`/company/${c.id}`)}
+          />
         ))}
       </div>
     </div>

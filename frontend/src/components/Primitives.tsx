@@ -75,7 +75,7 @@ export function ScoreGauge({ score, size = 140, label = "Fundamental Score" }: {
         <circle cx={cx} cy={cy} r={r} fill="none" stroke={C.border} strokeWidth="10" />
         <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="10" strokeDasharray={circumference}
           strokeDashoffset={circumference * (1 - pct)} strokeLinecap="round" transform={`rotate(-90 ${cx} ${cy})`} />
-        <text x={cx} y={cy - 2} textAnchor="middle" fontSize={size * 0.28} fontWeight="700" fill={C.text} fontVariantNumeric="tabular-nums">{score}</text>
+        <text x={cx} y={cy - 2} textAnchor="middle" fontSize={size * 0.28} fontWeight="700" fill={C.text} style={{ fontVariantNumeric: "tabular-nums" }}>{score}</text>
         <text x={cx} y={cy + size * 0.15} textAnchor="middle" fontSize={size * 0.07} fontWeight="600" fill={C.textFaint}>/ 100</text>
       </svg>
       <div style={{ fontSize: 11.5, fontWeight: 600, color: C.textFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>

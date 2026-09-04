@@ -18,12 +18,22 @@
 
 import { Router } from "express";
 import { getDbClient } from "../../db/client";
+import { DEMO_TICKERS } from "../../config/demoUniverse";
 
 const router = Router();
 
 router.get("/", async (req, res) => {
   const db = getDbClient();
-  const { data, error } = await db.from("companies").select("*").eq("is_active", true).order("name");
+  // Demo Readiness milestone: scoped to the 30-company demo universe. The
+  // companies table also holds ~8 earlier legacy/prototype companies with
+  // no distinguishing column from the real demo set (both share
+  // is_active=true) — without this filter they leaked into Discover.
+  const { data, error } = await db
+    .from("companies")
+    .select("*")
+    .eq("is_active", true)
+    .in("ticker", DEMO_TICKERS)
+    .order("name");
   if (error) return res.status(500).json({ error: error.message });
   res.json({ data });
 });

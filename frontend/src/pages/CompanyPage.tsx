@@ -6,9 +6,11 @@ import { useFollowed } from "../lib/followedContext";
 import { primaryScore } from "../lib/primaryScore";
 import { latestGrowthMetrics } from "../lib/growthMetrics";
 import { latestValuationMetrics } from "../lib/valuationMetrics";
+import { keyFinancials, formatKeyFinancialValue } from "../lib/keyFinancials";
+import { formatPercent, formatPlainNumber } from "../lib/formatters";
 import { Card, CategoryBar, ConfidenceBadge, ChangeTag, ScoreGauge, SectionLabel, StatusBadge } from "../components/Primitives";
 import { DataUnavailable, ErrorBlock, LoadingBlock } from "../components/States";
-import { C, CATEGORY_ORDER, severityColor, severityFromImportance } from "../styles/tokens";
+import { C, CATEGORY_LABELS, CATEGORY_ORDER, severityColor, severityFromImportance } from "../styles/tokens";
 
 function OpportunityChip({ score, confidence }: { score: number | null; confidence: number }) {
   return (
@@ -32,7 +34,7 @@ function ThesisSection({ title, text, tone }: { title: string; text: string | nu
   );
 }
 
-function ListCard({ title, items, icon: Icon }: { title: string; items: string[]; icon: React.ComponentType<{ size?: number }> }) {
+function ListCard({ title, items, icon: Icon }: { title: string; items: string[]; icon: React.ComponentType<any> }) {
   return (
     <div>
       <div style={{ fontSize: 11.5, fontWeight: 700, color: C.textFaint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
@@ -70,6 +72,7 @@ export default function CompanyPage() {
   const headline = primaryScore(scores);
   const growthMetrics = latestGrowthMetrics(metrics ?? []);
   const valuationMetrics = latestValuationMetrics(valuation ?? []);
+  const keyFinancialValues = keyFinancials(financials ?? [], metrics ?? []);
   const thesis = analysis?.thesis;
   const isFollowed = followed.has(id);
 
@@ -127,7 +130,7 @@ export default function CompanyPage() {
             const c = categories.find((x) => x.score_categories.category_key === key);
             if (!c) return (
               <div key={key} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ width: 148, fontSize: 13, color: C.textFaint }}>{key}</div>
+                <div style={{ width: 148, fontSize: 13, color: C.textFaint }}>{CATEGORY_LABELS[key]}</div>
                 <DataUnavailable label="Not yet scored" />
               </div>
             );
@@ -143,7 +146,7 @@ export default function CompanyPage() {
             <div key={m.metricName}>
               <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}>{m.label}</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>
-                {m.value != null ? `${m.value}${m.unit}` : <DataUnavailable />}
+                {m.value != null ? (m.unit === "%" ? formatPercent(m.value) : formatPlainNumber(m.value)) : <DataUnavailable />}
               </div>
               {m.periodEnd && <div style={{ fontSize: 11, color: C.textFaint, marginTop: 6 }}>{m.periodEnd} (ANNUAL)</div>}
             </div>
@@ -160,19 +163,19 @@ export default function CompanyPage() {
       )}
 
       <Card style={{ padding: "22px 24px", marginBottom: 16 }}>
-        <SectionLabel>Key Fundamentals</SectionLabel>
-        {!financials || financials.length === 0 ? (
+        <SectionLabel>Key Financials</SectionLabel>
+        {keyFinancialValues.length === 0 ? (
           <DataUnavailable label="No financial data ingested yet for this company." />
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 20 }}>
-            {financials.map((f) => (
-              <div key={`${f.metric_name}-${f.period_end}`}>
-                <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}>{f.metric_name.replace(/_/g, " ")}</div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>
-                  {f.value != null ? `${f.value}${f.unit === "%" ? "%" : ""}` : <DataUnavailable />}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 20 }}>
+            {keyFinancialValues.map((f) => (
+              <div key={f.key}>
+                <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}>{f.label}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>
+                  {formatKeyFinancialValue(f)}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.textFaint, marginTop: 6 }}>
-                  <FileText size={11} /><span>{f.period_end} ({f.period_type}) · source {f.source_id.slice(0, 8)}…</span>
+                  <FileText size={11} /><span>{f.periodEnd} (FY)</span>
                 </div>
               </div>
             ))}
