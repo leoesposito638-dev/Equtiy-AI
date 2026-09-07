@@ -14,7 +14,7 @@ export function DemoBanner({ show }: { show: boolean }) {
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", backgroundColor: C.amberSoft, borderBottom: `1px solid ${C.border}`, fontSize: 12.5, color: "#6B5420" }}>
       <WifiOff size={14} strokeWidth={2} />
       <span>
-        <strong>Demo data.</strong> No backend connected — showing fixtures shaped like the real API response.
+        <strong>Local snapshot.</strong> No live backend connected — showing a real data snapshot captured from Supabase, not fabricated values (see src/data/realDemoSnapshot.json).
         Set <code style={{ background: "rgba(0,0,0,0.06)", padding: "1px 5px", borderRadius: 4 }}>VITE_API_BASE_URL</code> to go live.
       </span>
     </div>

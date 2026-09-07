@@ -16,7 +16,7 @@ import { filterToDemoUniverse } from "./demoUniverse";
 import { followedFromWatchlists } from "./watchlistState";
 import {
   FIXTURE_ALERTS, FIXTURE_ANALYSIS, FIXTURE_CHANGES, FIXTURE_COMPANIES,
-  FIXTURE_FINANCIALS, FIXTURE_FOLLOWED, FIXTURE_SCORES, FIXTURE_VALUATION,
+  FIXTURE_FINANCIALS, FIXTURE_FOLLOWED, FIXTURE_METRICS, FIXTURE_SCORES, FIXTURE_VALUATION,
 } from "./fixtures";
 import type {
   AlertRow, AnalysisResponse, CalculatedMetricRow, ChangeEventRow, Company,
@@ -65,7 +65,7 @@ export function useCompanies(): AsyncState<Company[]> {
 }
 
 export function useCompanyMetrics(id: string | undefined): AsyncState<CalculatedMetricRow[]> {
-  return useAsync(() => api.getCompanyMetrics(id!), [], [id]);
+  return useAsync(() => api.getCompanyMetrics(id!), id ? FIXTURE_METRICS[id] ?? [] : [], [id]);
 }
 
 export function useCompanyScores(id: string | undefined): AsyncState<ScoresResponse> {
