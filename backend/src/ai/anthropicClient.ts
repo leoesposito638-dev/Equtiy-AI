@@ -30,9 +30,9 @@ export class AnthropicClient implements AiClient {
       throw new Error(`Anthropic API error ${res.status}: ${await res.text()}`);
     }
 
-    const data = await res.json();
-    const textBlock = (data.content ?? []).find((b: { type: string }) => b.type === "text");
+    const data = (await res.json()) as { content?: Array<{ type: string; text: string }> };
+    const textBlock = (data.content ?? []).find((b) => b.type === "text");
     if (!textBlock) throw new Error("Anthropic API returned no text content block.");
-    return textBlock.text as string;
+    return textBlock.text;
   }
 }

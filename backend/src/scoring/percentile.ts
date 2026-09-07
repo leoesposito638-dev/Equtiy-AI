@@ -54,11 +54,11 @@ export function scoreAgainstBenchmark(
 function interpolate(anchors: Array<[number, number]>, value: number): number {
   // anchors sorted by the *value* axis (2nd element) ascending
   const sorted = [...anchors].sort((a, b) => a[1] - b[1]);
-  if (value <= sorted[0][1]) return sorted[0][0];
-  if (value >= sorted[sorted.length - 1][1]) return sorted[sorted.length - 1][0];
+  if (value <= sorted[0]![1]) return sorted[0]![0];
+  if (value >= sorted[sorted.length - 1]![1]) return sorted[sorted.length - 1]![0];
   for (let i = 0; i < sorted.length - 1; i++) {
-    const [pctA, valA] = sorted[i];
-    const [pctB, valB] = sorted[i + 1];
+    const [pctA, valA] = sorted[i]!;
+    const [pctB, valB] = sorted[i + 1]!;
     if (value >= valA && value <= valB) {
       const t = valB === valA ? 0 : (value - valA) / (valB - valA);
       return pctA + t * (pctB - pctA);

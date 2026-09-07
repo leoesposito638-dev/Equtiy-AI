@@ -54,7 +54,7 @@ export function detectChanges(
       oldValue: previous.fundamentalScore,
       newValue: current.score,
       absoluteChange: Math.round(scoreDelta * 10) / 10,
-      percentageChange: previous.fundamentalScore !== 0 ? (scoreDelta / previous.fundamentalScore) * 100 : null,
+      percentageChange: previous.fundamentalScore !== 0 ? (scoreDelta / previous.fundamentalScore) * 100 : undefined,
       importanceScore: importance,
       direction: scoreDelta > 0 ? "UP" : scoreDelta < 0 ? "DOWN" : "FLAT",
     });
@@ -81,7 +81,7 @@ export function detectChanges(
       oldValue: prevCs.score,
       newValue: cs.score,
       absoluteChange: Math.round(delta * 10) / 10,
-      percentageChange: prevCs.score !== 0 ? (delta / prevCs.score) * 100 : null,
+      percentageChange: prevCs.score !== 0 ? (delta / prevCs.score) * 100 : undefined,
       importanceScore: importance,
       direction: delta > 0 ? "UP" : delta < 0 ? "DOWN" : "FLAT",
     });
@@ -115,7 +115,7 @@ function prettyCategory(key?: string): string {
   return key
     .toLowerCase()
     .split("_")
-    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .map((w) => (w[0] ?? "").toUpperCase() + w.slice(1))
     .join(" ");
 }
 
