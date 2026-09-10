@@ -38,7 +38,7 @@ function mockRoutedFetch(routes: Record<string, { status: number; body: unknown 
   );
 }
 
-function factsBody(unitsKey: "USD" | "USD/shares", facts: unknown[]) {
+function factsBody(unitsKey: "USD" | "USD/shares" | "shares", facts: unknown[]) {
   return { units: { [unitsKey]: facts } };
 }
 
@@ -810,6 +810,132 @@ describe("SecEdgarAdapter — getBalanceSheet (Milestone 12B)", () => {
     const cash = result.data!.filter((i) => i.metricName === "cash");
     expect(cash).toHaveLength(1);
     expect(cash[0]!.rawValue).toBe(8_589_000_000);
+  });
+});
+
+// ============================================================================
+// Milestone 13F — dei:EntityCommonStockSharesOutstanding, reusing
+// fetchInstantConcept/fetchMostCurrentInstantConcept exactly (no second
+// selection algorithm) against the `dei` namespace instead of `us-gaap`.
+// ============================================================================
+
+describe("SecEdgarAdapter — shares_outstanding via dei namespace (Milestone 13F)", () => {
+  it("queries the dei namespace (not us-gaap) and maps a current 10-K/FY fact to shares_outstanding with unit 'shares'", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "CIK0001045810/dei/EntityCommonStockSharesOutstanding.json": { status: 200, body: factsBody("shares", [
+        { end: "2026-01-25", val: 24_100_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getBalanceSheet({ ticker: "NVDA" }, "ANNUAL");
+    const shares = result.data!.find((i) => i.metricName === "shares_outstanding");
+    expect(shares?.rawValue).toBe(24_100_000_000);
+    expect(shares?.unit).toBe("shares");
+    expect(shares?.metricIdentifier).toContain("dei");
+    expect(shares?.metricIdentifier).toContain("EntityCommonStockSharesOutstanding");
+    expect(shares?.periodType).toBe("INSTANT");
+  });
+
+  it("a genuinely current fact wins over a stale historical entry at an older period_end", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "dei/EntityCommonStockSharesOutstanding.json": { status: 200, body: factsBody("shares", [
+        { end: "2010-10-27", val: 122_530_193, fy: 2010, fp: "FY", form: "10-K", filed: "2010-11-01" }, // stale
+        { end: "2026-06-30", val: 2_658_186_195, fy: 2026, fp: "FY", form: "10-K", filed: "2026-08-06" }, // current
+      ]) },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getBalanceSheet({ ticker: "NVDA" }, "ANNUAL");
+    const shares = result.data!.filter((i) => i.metricName === "shares_outstanding");
+    // Both period-ends are real annual facts and both are kept (same
+    // multi-period behavior as cash/total_assets/etc.) — but the current
+    // one must be present and the most recent one returned first.
+    expect(shares[0]?.periodEnd).toBe("2026-06-30");
+    expect(shares[0]?.rawValue).toBe(2_658_186_195);
+  });
+
+  it("a restated fact at the SAME period_end: the most-recently-filed value wins, not the first one seen (filed-date-aware dedup)", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "dei/EntityCommonStockSharesOutstanding.json": { status: 200, body: factsBody("shares", [
+        { end: "2026-01-25", val: 25_000_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-20" }, // filed earlier
+        { end: "2026-01-25", val: 24_100_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" }, // filed later — wins
+      ]) },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getBalanceSheet({ ticker: "NVDA" }, "ANNUAL");
+    const shares = result.data!.filter((i) => i.metricName === "shares_outstanding");
+    expect(shares).toHaveLength(1); // same period_end deduped to one row
+    expect(shares[0]?.rawValue).toBe(24_100_000_000);
+  });
+
+  it("excludes 10-Q cover-page facts even when they are the most recent by date — only 10-K/FY counts, same rule as every other concept in this file", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "dei/EntityCommonStockSharesOutstanding.json": { status: 200, body: factsBody("shares", [
+        { end: "2026-08-21", val: 24_100_000_000, fy: 2027, fp: "Q2", form: "10-Q", filed: "2026-08-26" }, // more recent but wrong form
+        { end: "2026-01-25", val: 24_600_000_000, fy: 2026, fp: "FY", form: "10-K", filed: "2026-02-25" },
+      ]) },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getBalanceSheet({ ticker: "NVDA" }, "ANNUAL");
+    const shares = result.data!.filter((i) => i.metricName === "shares_outstanding");
+    expect(shares).toHaveLength(1);
+    expect(shares[0]?.periodEnd).toBe("2026-01-25");
+    expect(shares[0]?.rawValue).toBe(24_600_000_000);
+  });
+
+  it("MA-shaped case: the only available fact is >2 years stale (verified live: MA's sole 10-K/FY fact is dated 2010-02-11) -> treated as unavailable, never persisted as if current", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: { "0": { cik_str: 1141391, ticker: "MA", title: "Mastercard Incorporated" } } },
+      "dei/EntityCommonStockSharesOutstanding.json": { status: 200, body: factsBody("shares", [
+        { end: "2010-02-11", val: 110_441_542, fy: 2009, fp: "FY", form: "10-K", filed: "2010-02-11" },
+      ]) },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getBalanceSheet({ ticker: "MA" }, "ANNUAL");
+    if (result.status === "available") {
+      expect(result.data!.find((i) => i.metricName === "shares_outstanding")).toBeUndefined();
+    } else {
+      expect(result.status).toBe("unavailable");
+    }
+  });
+
+  it("a recent fact (within 2 years) is NOT filtered by the staleness guard", async () => {
+    const recentDate = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10); // 100 days ago
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: TICKER_MAP_FIXTURE },
+      "dei/EntityCommonStockSharesOutstanding.json": { status: 200, body: factsBody("shares", [
+        { end: recentDate, val: 24_100_000_000, fy: 2026, fp: "FY", form: "10-K", filed: recentDate },
+      ]) },
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getBalanceSheet({ ticker: "NVDA" }, "ANNUAL");
+    const shares = result.data!.find((i) => i.metricName === "shares_outstanding");
+    expect(shares?.rawValue).toBe(24_100_000_000);
+  });
+
+  it("GOOGL-shaped case: no dei facts at all (verified live, Milestone 13F) -> shares_outstanding is honestly absent, never substituted with a us-gaap concept", async () => {
+    mockRoutedFetch({
+      "company_tickers.json": { status: 200, body: { "0": { cik_str: 1652044, ticker: "GOOGL", title: "Alphabet Inc." } } },
+      "dei/EntityCommonStockSharesOutstanding.json": { status: 404, body: {} },
+      // A us-gaap concept of the same conceptual kind existing must NOT be
+      // picked up as a fallback — this milestone's rule is "one concept, no
+      // substitution," so even if this route were mocked with real data it
+      // must be irrelevant. Left unmocked (404 by default) to prove nothing
+      // reaches for it.
+    });
+    const adapter = new SecEdgarAdapter("EquityAI-Test test@example.com");
+    const result = await adapter.getBalanceSheet({ ticker: "GOOGL" }, "ANNUAL");
+    // Every other concept 404s too in this minimal fixture, so the whole
+    // call is unavailable — the important assertion is there is no
+    // shares_outstanding line item smuggled in from anywhere.
+    if (result.status === "available") {
+      expect(result.data!.find((i) => i.metricName === "shares_outstanding")).toBeUndefined();
+    } else {
+      expect(result.status).toBe("unavailable");
+    }
   });
 });
 

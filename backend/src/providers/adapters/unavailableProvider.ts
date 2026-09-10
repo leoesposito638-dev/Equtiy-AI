@@ -44,6 +44,9 @@ export const unavailableMarketDataProvider: MarketDataProvider = {
   async getHistoricalPrices(_ref: ProviderCompanyRef, _from: string, _to: string) {
     return unavailable();
   },
+  async getValuationRatios(_ref: ProviderCompanyRef) {
+    return unavailable();
+  },
 };
 
 export const unavailableFinancialDataProvider: FinancialDataProvider = {

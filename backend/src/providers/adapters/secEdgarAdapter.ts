@@ -170,14 +170,24 @@ const CURRENT_LIABILITIES_CONCEPTS = ["LiabilitiesCurrent"];
 const LONG_TERM_DEBT_CURRENT_CONCEPTS = ["LongTermDebtCurrent"];
 const LONG_TERM_DEBT_NONCURRENT_CONCEPTS = ["LongTermDebtNoncurrent"];
 const SHORT_TERM_BORROWINGS_CONCEPTS = ["ShortTermBorrowings"];
-// NOTE: shares_outstanding (needed for share_count_trend/share_dilution_trend)
-// was investigated and NOT implemented — see file-level STOP note below
-// fetchMostCurrentInstantConcept. us-gaap:CommonStockSharesOutstanding was
-// verified empirically present for only 3 of 8 sampled companies (NVDA, JPM,
-// CAT); most large-cap filers disclose share count via the `dei` taxonomy's
-// cover-page tag instead, a materially different namespace/mechanism this
-// adapter does not use — per Milestone 12B Phase 6, documenting this rather
-// than inventing a partial/unreliable solution.
+/** Milestone 13F. dei:EntityCommonStockSharesOutstanding is the cover-page
+ *  tag required on every 10-K/10-Q (SEC Exchange Act Rule 12b-20) — a
+ *  different XBRL *namespace* (`dei`, not `us-gaap`) from every other
+ *  concept in this file, which is why it was left unimplemented in
+ *  Milestone 12B (us-gaap:CommonStockSharesOutstanding, the wrong concept
+ *  for this, was empirically present for only 3/8 sampled companies).
+ *  Single concept, no fallback list: there is exactly one standard tag for
+ *  this, and substituting a different one (e.g. the us-gaap concept above)
+ *  for a company where this one is absent would be exactly the "silently
+ *  substitute another shares concept" this project's data-integrity rules
+ *  forbid. Deliberately excludes GOOGL from ever silently "working": Alphabet's
+ *  SEC company facts (verified live, Milestone 13F) carry ZERO `dei`-namespace
+ *  concepts at all — not a differently-named tag, an entirely absent
+ *  namespace, consistent with its Class A/B/C share structure requiring
+ *  per-class disclosure rather than one combined cover-page figure. GOOGL
+ *  therefore always returns "unavailable" here, not a guess. */
+const SHARES_OUTSTANDING_CONCEPTS = ["EntityCommonStockSharesOutstanding"];
+const SHARES_OUTSTANDING_NAMESPACE = "dei" as const;
 // NOTE: total_debt / net_debt were investigated in Milestone 12B and left
 // NOT implemented — there is no single standard XBRL concept for "total
 // debt" and summing an arbitrary subset would have invented a debt-
@@ -398,21 +408,22 @@ export class SecEdgarAdapter implements FinancialDataProvider {
   private async fetchInstantConcept(
     cik: string,
     concept: string,
-    unitsKey: "USD" | "shares"
+    unitsKey: "USD" | "shares",
+    namespace: "us-gaap" | "dei" = "us-gaap"
   ): Promise<{ ok: true; factsByPeriodEnd: Map<string, SecFact> } | { ok: false; reason: string }> {
-    const url = `${SEC_DATA_BASE_URL}/CIK${cik}/us-gaap/${concept}.json`;
+    const url = `${SEC_DATA_BASE_URL}/CIK${cik}/${namespace}/${concept}.json`;
     const result = await this.fetchJson(url);
     if (!result.ok) return { ok: false, reason: result.reason };
 
     const body = result.body as SecConceptResponse;
     const facts = body.units?.[unitsKey];
     if (!Array.isArray(facts) || facts.length === 0) {
-      return { ok: false, reason: `SEC concept us-gaap:${concept} has no '${unitsKey}' facts (from ${url}).` };
+      return { ok: false, reason: `SEC concept ${namespace}:${concept} has no '${unitsKey}' facts (from ${url}).` };
     }
 
     const annualFacts = facts.filter((f) => f.form === "10-K" && f.fp === "FY" && typeof f.val === "number" && !Number.isNaN(f.val));
     if (annualFacts.length === 0) {
-      return { ok: false, reason: `SEC concept us-gaap:${concept} has no genuinely annual (10-K, FY) instant facts (from ${url}).` };
+      return { ok: false, reason: `SEC concept ${namespace}:${concept} has no genuinely annual (10-K, FY) instant facts (from ${url}).` };
     }
 
     const factsByPeriodEnd = new Map<string, SecFact>();
@@ -430,13 +441,14 @@ export class SecEdgarAdapter implements FinancialDataProvider {
   private async fetchMostCurrentInstantConcept(
     cik: string,
     concepts: string[],
-    unitsKey: "USD" | "shares"
+    unitsKey: "USD" | "shares",
+    namespace: "us-gaap" | "dei" = "us-gaap"
   ): Promise<{ ok: true; concept: string; factsByPeriodEnd: Map<string, SecFact> } | { ok: false; reason: string }> {
     const reasons: string[] = [];
     const candidates: Array<{ concept: string; factsByPeriodEnd: Map<string, SecFact>; latestPeriodEnd: string }> = [];
 
     for (const concept of concepts) {
-      const result = await this.fetchInstantConcept(cik, concept, unitsKey);
+      const result = await this.fetchInstantConcept(cik, concept, unitsKey, namespace);
       if (!result.ok) {
         reasons.push(result.reason);
         continue;
@@ -574,7 +586,7 @@ export class SecEdgarAdapter implements FinancialDataProvider {
 
     const [
       cash, totalAssets, totalLiabilities, equity, currentAssets, currentLiabilities,
-      longTermDebtCurrent, longTermDebtNoncurrent, shortTermBorrowings,
+      longTermDebtCurrent, longTermDebtNoncurrent, shortTermBorrowings, sharesOutstanding,
     ] = await Promise.all([
       this.fetchMostCurrentInstantConcept(cik, CASH_CONCEPTS, "USD"),
       this.fetchMostCurrentInstantConcept(cik, TOTAL_ASSETS_CONCEPTS, "USD"),
@@ -585,6 +597,7 @@ export class SecEdgarAdapter implements FinancialDataProvider {
       this.fetchMostCurrentInstantConcept(cik, LONG_TERM_DEBT_CURRENT_CONCEPTS, "USD"),
       this.fetchMostCurrentInstantConcept(cik, LONG_TERM_DEBT_NONCURRENT_CONCEPTS, "USD"),
       this.fetchMostCurrentInstantConcept(cik, SHORT_TERM_BORROWINGS_CONCEPTS, "USD"),
+      this.fetchMostCurrentInstantConcept(cik, SHARES_OUTSTANDING_CONCEPTS, "shares", SHARES_OUTSTANDING_NAMESPACE),
     ]);
 
     const unavailableReasons: string[] = [];
@@ -592,7 +605,7 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     let mostRecentFact: SecFact | undefined;
     let mostRecentPeriodEnd: string | undefined;
 
-    const collect = (metricName: string, fallbackIdentifier: string, result: typeof cash) => {
+    const collect = (metricName: string, fallbackIdentifier: string, result: typeof cash, unit: string = "USD", namespace: "us-gaap" | "dei" = "us-gaap") => {
       if (!result.ok) {
         unavailableReasons.push(result.reason);
         return;
@@ -601,9 +614,12 @@ export class SecEdgarAdapter implements FinancialDataProvider {
       for (const [periodEnd, fact] of sortedPeriods.slice(0, LOOKBACK_PERIODS)) {
         lineItems.push({
           metricName,
-          metricIdentifier: `sec.us-gaap.${result.concept}`,
+          metricIdentifier: `sec.${namespace}.${result.concept}`,
           rawValue: fact.val,
-          unit: "USD",
+          unit,
+          // financial_metrics.currency is not-null even for a non-monetary
+          // unit like "shares" — tracks the company's reporting currency
+          // context, same convention already used for eps's USD_PER_SHARE.
           currency: "USD",
           // No periodStart: these are instant (point-in-time) facts, not
           // duration facts — there is no meaningful "start" to report.
@@ -628,6 +644,34 @@ export class SecEdgarAdapter implements FinancialDataProvider {
     collect("long_term_debt_current", "sec.us-gaap.long_term_debt_current", longTermDebtCurrent);
     collect("long_term_debt_noncurrent", "sec.us-gaap.long_term_debt_noncurrent", longTermDebtNoncurrent);
     collect("short_term_borrowings", "sec.us-gaap.short_term_borrowings", shortTermBorrowings);
+    // Milestone 13F — dei namespace, not us-gaap; see SHARES_OUTSTANDING_CONCEPTS.
+    collect("shares_outstanding", "sec.dei.shares_outstanding", sharesOutstanding, "shares", SHARES_OUTSTANDING_NAMESPACE);
+
+    // Milestone 13F — "most current available" is not the same guarantee as
+    // "genuinely current": every other concept above trades off multiple
+    // fallback tags, so a stale result is very unlikely, but
+    // shares_outstanding has exactly one concept and no fallback. Verified
+    // live: MA's only 10-K/FY dei:EntityCommonStockSharesOutstanding fact is
+    // dated 2010-02-11 — 16 years stale, not a borderline case. "Most
+    // current wins" already ran (fetchMostCurrentInstantConcept) — this is
+    // a separate, additive recency floor on its result, not a second
+    // selection algorithm; it never changes which fact would be chosen, it
+    // only refuses to persist the choice when even the best available
+    // answer is this old. No other concept gets this check: there is no
+    // similar evidence any of them need it, and adding it speculatively
+    // would be exactly the unjustified "second rule" this milestone avoids.
+    const MAX_SHARES_OUTSTANDING_AGE_DAYS = 2 * 366;
+    for (let i = lineItems.length - 1; i >= 0; i--) {
+      const item = lineItems[i]!;
+      if (item.metricName !== "shares_outstanding") continue;
+      const ageDays = (Date.now() - new Date(item.periodEnd).getTime()) / (1000 * 60 * 60 * 24);
+      if (ageDays > MAX_SHARES_OUTSTANDING_AGE_DAYS) {
+        lineItems.splice(i, 1);
+        unavailableReasons.push(
+          `shares_outstanding for ${ref.ticker}: the most current available dei:EntityCommonStockSharesOutstanding fact (period end ${item.periodEnd}) is stale (>2 years old) — treated as unavailable rather than silently persisted as current.`
+        );
+      }
+    }
 
     if (lineItems.length === 0 || !mostRecentFact) {
       return {

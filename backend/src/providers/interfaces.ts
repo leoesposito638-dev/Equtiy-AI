@@ -54,6 +54,28 @@ export interface Quote {
   high52w: number | null;
   low52w: number | null;
   timestamp: string;
+  /** Milestone 13F. Not part of the original Quote shape — added because
+   *  Enterprise Value is one of the minimum required valuation inputs and,
+   *  per that milestone's explicit decision, must come from a single
+   *  provider's own bundled figure (never reconstructed by combining this
+   *  provider's price/shares with a different provider's debt/cash), so it
+   *  belongs alongside the rest of this same quote, not a separate call. */
+  enterpriseValue: number | null;
+}
+
+/** Milestone 13F — a provider's own pre-computed, internally consistent TTM
+ *  valuation ratios. Deliberately NOT derived here from separately-fetched
+ *  numerator/denominator pairs (e.g. our own EV ÷ our own EBITDA) — each
+ *  value is exactly what the provider itself already divided, so it can
+ *  never silently mix two different periods or two different providers
+ *  inside one ratio. A field is null when the provider didn't return it,
+ *  never computed as a fallback. */
+export interface ValuationRatios {
+  pe: number | null;
+  evToEbitda: number | null;
+  evToSales: number | null;
+  priceToFcf: number | null;
+  fcfYield: number | null;
 }
 
 export interface EarningsRecord {
@@ -107,6 +129,8 @@ export interface MarketDataProvider {
     from: string,
     to: string
   ): Promise<ProviderResult<Array<{ date: string; close: number; volume: number }>>>;
+  /** Milestone 13F. */
+  getValuationRatios(ref: ProviderCompanyRef): Promise<ProviderResult<ValuationRatios>>;
 }
 
 export interface FinancialDataProvider {

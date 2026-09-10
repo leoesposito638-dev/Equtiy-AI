@@ -13,6 +13,7 @@ import {
   unavailableFilingProvider,
 } from "./adapters/unavailableProvider";
 import { FmpFinancialDataAdapter } from "./adapters/fmpAdapter";
+import { FmpMarketDataAdapter } from "./adapters/fmpMarketDataAdapter";
 import { SecEdgarAdapter } from "./adapters/secEdgarAdapter";
 import { ProviderResolver } from "./resolver";
 import type {
@@ -51,8 +52,17 @@ export function buildProviderRegistry(): ProviderRegistry {
       ? new ProviderResolver(financialDataProviders)
       : unavailableFinancialDataProvider;
 
+  // Milestone 13F: marketData resolves to a real FMP-backed adapter only
+  // when FMP_API_KEY is present — same conditional-construction pattern as
+  // financialData above, same honest unavailable fallback when it isn't.
+  // No resolver/fallback chain needed here (unlike financialData's SEC+FMP
+  // pair): FMP is currently the only implemented market-data source.
+  const marketData = process.env.FMP_API_KEY
+    ? new FmpMarketDataAdapter(process.env.FMP_API_KEY)
+    : unavailableMarketDataProvider;
+
   return {
-    marketData: unavailableMarketDataProvider,
+    marketData,
     financialData,
     earnings: unavailableEarningsProvider,
     news: unavailableNewsProvider,
