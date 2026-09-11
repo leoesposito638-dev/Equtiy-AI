@@ -1,0 +1,274 @@
+// ============================================================================
+// Equity AI — Supabase-backed ScoringRepo
+//
+// Implements the ScoringRepo interface declared in scoringEngine.ts against
+// the real Supabase client. scoringEngine.ts, scoreCategory.ts, percentile.ts,
+// and confidence.ts are completely unmodified — they only know about the
+// ScoringRepo interface, never about Supabase directly, same boundary
+// supabaseIngestionRepo.ts already established for ingestion.
+//
+// Row-mapping/shaping logic lives in scoringRepoHelpers.ts (pure, unit
+// tested); this file is the thin I/O wrapper around it, verified via the
+// real live NVDA run rather than mocked unit tests — matching how
+// supabaseIngestionRepo.ts itself has no unit tests either.
+// ============================================================================
+
+import { getDbClient } from "../db/client";
+import type { ScoringRepo } from "./scoringEngine";
+import type { FundamentalScore, MetricBenchmark } from "../types/domain";
+import type { MetricInput } from "./categoryScorers/types";
+import { resolveBenchmarkTier } from "./benchmarkResolver";
+import {
+  buildMetricInput,
+  mapScoreCategoryRow,
+  mapScoreRuleRow,
+  type DbScoreCategoryRow,
+  type DbScoreRuleRow,
+  type DbMetricBenchmarkRow,
+} from "./scoringRepoHelpers";
+
+/** Shapes one metric_benchmarks row into the MetricBenchmark shape resolver/
+ *  scoring code expects — the same field mapping scoringRepoHelpers.ts's
+ *  buildBenchmarkMap uses per-row, just applied to a single row at a time
+ *  here since getBenchmarks (below) must resolve SECTOR vs MARKET_WIDE per
+ *  metric via the existing resolveBenchmarkTier(), not just collect rows. */
+function toMetricBenchmark(row: DbMetricBenchmarkRow): MetricBenchmark {
+  return {
+    metricName: row.metric_name,
+    sector: row.sector ?? undefined,
+    industry: row.industry ?? undefined,
+    periodEnd: row.period_end,
+    p25: row.p25,
+    median: row.median,
+    p75: row.p75,
+    p90: row.p90,
+    sampleSize: row.sample_size,
+  };
+}
+
+/** How many past ANNUAL calculated_metrics periods to load per metric.
+ *  Generous relative to the largest minimum_data_points (4) so nothing
+ *  gets silently truncated as more history accumulates over time. */
+const MAX_HISTORY_PERIODS = 20;
+
+/** Milestone 12D: TREND rules that score the trend of an ALREADY-COMPUTED
+ *  metric's own stored history, under a different score_rules metric_name.
+ *  This mapping is not a new formula — it is exactly what
+ *  fundamentalRatios.ts already documents at the top of that file:
+ *  "margin_trend, gross_margin_stability, roic_persistence: these are TREND
+ *  rules over an already-computed metric's OWN stored history (net_margin,
+ *  gross_margin, roic respectively) — scoreCategory.ts's existing generic
+ *  TREND handling already covers them with zero new code, once/if that
+ *  underlying metric has enough stored periods." This map is the missing
+ *  wiring: it redirects which calculated_metrics rows a TREND rule reads,
+ *  while still keying the result under the rule's own metric_name so
+ *  scoreCategory.ts's `ctx.metrics.get(rule.metricName)` finds it.
+ *  roic_persistence maps to "roic", which has no stored rows (roic is not
+ *  computed — no invested-capital methodology exists in this repository,
+ *  see Milestone 12B/12D reports) — this correctly yields no data rather
+ *  than being special-cased, exactly like any other genuinely missing
+ *  metric. Milestone 13C added debt_trend -> total_debt and
+ *  net_debt_trend -> net_debt, the same pattern applied to the debt-derived
+ *  metrics newly computed in fundamentalRatios.ts. */
+const TREND_METRIC_SOURCE: Record<string, string> = {
+  margin_trend: "net_margin",
+  gross_margin_stability: "gross_margin",
+  roic_persistence: "roic",
+  debt_trend: "total_debt",
+  net_debt_trend: "net_debt",
+};
+
+export function buildSupabaseScoringRepo(): ScoringRepo {
+  const db = getDbClient();
+
+  return {
+    async getActiveCategories() {
+      const { data, error } = await db.from("score_categories").select("*").eq("is_active", true);
+      if (error) throw new Error(`score_categories query failed: ${error.message}`);
+      return (data ?? []).map((row) => mapScoreCategoryRow(row as DbScoreCategoryRow));
+    },
+
+    async getActiveRules(version: string) {
+      const { data, error } = await db.from("score_rules").select("*").eq("version", version).eq("active", true);
+      if (error) throw new Error(`score_rules query failed: ${error.message}`);
+      return (data ?? []).map((row) => mapScoreRuleRow(row as DbScoreRuleRow));
+    },
+
+    async getMetricInputs(companyId: string, metricNames: string[]) {
+      const map = new Map<string, MetricInput>();
+      // One query per metric — metricNames per call is always small (one
+      // category's worth of rules, currently <=6), and this keeps each
+      // metric's history independently ordered/limited without a more
+      // complex batched-and-grouped query.
+      for (const metricName of metricNames) {
+        const sourceMetricName = TREND_METRIC_SOURCE[metricName] ?? metricName;
+        const { data, error } = await db
+          .from("calculated_metrics")
+          .select("period_end, value")
+          .eq("company_id", companyId)
+          .eq("metric_name", sourceMetricName)
+          .eq("period_type", "ANNUAL")
+          .order("period_end", { ascending: false })
+          .limit(MAX_HISTORY_PERIODS);
+        if (error) throw new Error(`calculated_metrics query failed for ${sourceMetricName}: ${error.message}`);
+
+        const rows = (data ?? [])
+          .filter((r: { value: number | null }) => r.value !== null)
+          .map((r: { period_end: string; value: number }) => ({ periodEnd: r.period_end, value: r.value }));
+        // Keyed under the rule's own metricName (not sourceMetricName) so
+        // scoreCategory.ts's ctx.metrics.get(rule.metricName) finds it.
+        if (rows.length > 0) map.set(metricName, buildMetricInput(metricName, rows));
+      }
+      return map;
+    },
+
+    async getBenchmarks(companySector: string | undefined, metricNames: string[]) {
+      if (metricNames.length === 0) return new Map();
+
+      // Fetch BOTH candidate tiers — a plain .eq("sector", companySector)
+      // can never match a MARKET_WIDE row (sector IS NULL is never equal to
+      // a non-null value in Postgres), which is exactly the bug this fixes.
+      const [sectorResult, marketWideResult] = await Promise.all([
+        companySector
+          ? db.from("metric_benchmarks").select("*").in("metric_name", metricNames).eq("sector", companySector)
+          : Promise.resolve({ data: [] as DbMetricBenchmarkRow[], error: null }),
+        db.from("metric_benchmarks").select("*").in("metric_name", metricNames).is("sector", null),
+      ]);
+      if (sectorResult.error) throw new Error(`metric_benchmarks sector query failed: ${sectorResult.error.message}`);
+      if (marketWideResult.error) throw new Error(`metric_benchmarks market-wide query failed: ${marketWideResult.error.message}`);
+
+      const sectorRowByMetric = new Map(((sectorResult.data ?? []) as DbMetricBenchmarkRow[]).map((r) => [r.metric_name, r]));
+      const marketWideRowByMetric = new Map(((marketWideResult.data ?? []) as DbMetricBenchmarkRow[]).map((r) => [r.metric_name, r]));
+
+      const map = new Map<string, MetricBenchmark>();
+      for (const metricName of metricNames) {
+        const sectorRow = sectorRowByMetric.get(metricName);
+        const marketWideRow = marketWideRowByMetric.get(metricName);
+        // Existing, already-tested tier resolution (benchmarkResolver.ts) —
+        // SECTOR first, MARKET_WIDE fallback, no row if neither exists.
+        const resolved = resolveBenchmarkTier(
+          sectorRow ? toMetricBenchmark(sectorRow) : null,
+          marketWideRow ? toMetricBenchmark(marketWideRow) : null
+        );
+        if (resolved.benchmark) map.set(metricName, resolved.benchmark);
+      }
+      return map;
+    },
+
+    async getCompanySector(companyId: string) {
+      const { data, error } = await db.from("companies").select("sector").eq("id", companyId).maybeSingle();
+      if (error) throw new Error(`companies sector lookup failed: ${error.message}`);
+      return (data?.sector as string | undefined) ?? undefined;
+    },
+
+    async getPreviousFundamentalScore(companyId: string) {
+      const { data, error } = await db
+        .from("fundamental_scores")
+        .select("score, calculated_at")
+        .eq("company_id", companyId)
+        .order("calculated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error(`fundamental_scores lookup failed: ${error.message}`);
+      if (!data) return null;
+      return { score: data.score as number, calculatedAt: data.calculated_at as string };
+    },
+
+    // Milestone 12C: persistence is idempotent and coverage-filtered.
+    //
+    // - category_scores: a category with coverage=0 has no scored data at
+    //   all (no rule had enough data to contribute) — it is "not yet
+    //   scored," not a real score of 0, and must never be written as a row.
+    //   Only categories with coverage > 0 are persisted.
+    // - Neither table has a DB-level unique constraint (unlike the sibling
+    //   calculated_metrics table's uq_calculated_metrics), so idempotency is
+    //   enforced at the application level — the same query-existing-then-
+    //   write pattern already used elsewhere in this codebase
+    //   (getExistingObservationKeys, getExistingCalculatedMetricKeys). The
+    //   natural key mirrors uq_calculated_metrics minus period_end (these
+    //   are point-in-time snapshots, not per-period facts):
+    //   (company_id, calculation_version) for fundamental_scores and
+    //   (company_id, category_id, calculation_version) for category_scores.
+    //   Re-running with unchanged inputs updates the existing row in place
+    //   instead of inserting a duplicate; a changed score correctly
+    //   replaces the stored value.
+    async storeFundamentalScore(result: FundamentalScore) {
+      const fundamentalPayload = {
+        company_id: result.companyId,
+        score: result.score,
+        confidence: result.confidence,
+        data_coverage: result.dataCoverage,
+        calculation_version: result.calculationVersion,
+        previous_score: result.previousScore,
+        score_change: result.scoreChange,
+        calculated_at: result.calculatedAt,
+      };
+
+      const { data: existingFundamental, error: existingFundamentalError } = await db
+        .from("fundamental_scores")
+        .select("id, calculated_at")
+        .eq("company_id", result.companyId)
+        .eq("calculation_version", result.calculationVersion)
+        .order("calculated_at", { ascending: false })
+        .limit(1);
+      if (existingFundamentalError) {
+        throw new Error(`fundamental_scores lookup failed: ${existingFundamentalError.message}`);
+      }
+
+      if (existingFundamental && existingFundamental.length > 0) {
+        const { error } = await db
+          .from("fundamental_scores")
+          .update(fundamentalPayload)
+          .eq("id", (existingFundamental[0] as { id: string }).id);
+        if (error) throw new Error(`fundamental_scores update failed: ${error.message}`);
+      } else {
+        const { error } = await db.from("fundamental_scores").insert(fundamentalPayload);
+        if (error) throw new Error(`fundamental_scores insert failed: ${error.message}`);
+      }
+
+      const scoredCategories = result.categoryScores.filter((cs) => cs.coverage > 0);
+      if (scoredCategories.length === 0) return;
+
+      const { data: existingCategoryRows, error: existingCategoryError } = await db
+        .from("category_scores")
+        .select("id, category_id, calculated_at")
+        .eq("company_id", result.companyId)
+        .eq("calculation_version", result.calculationVersion)
+        .in(
+          "category_id",
+          scoredCategories.map((cs) => cs.categoryId)
+        );
+      if (existingCategoryError) {
+        throw new Error(`category_scores lookup failed: ${existingCategoryError.message}`);
+      }
+
+      const latestByCategoryId = new Map<string, { id: string; calculated_at: string }>();
+      for (const row of (existingCategoryRows ?? []) as Array<{ id: string; category_id: string; calculated_at: string }>) {
+        const current = latestByCategoryId.get(row.category_id);
+        if (!current || row.calculated_at > current.calculated_at) {
+          latestByCategoryId.set(row.category_id, { id: row.id, calculated_at: row.calculated_at });
+        }
+      }
+
+      for (const cs of scoredCategories) {
+        const payload = {
+          company_id: result.companyId,
+          category_id: cs.categoryId,
+          score: cs.score,
+          confidence: cs.confidence,
+          coverage: cs.coverage,
+          calculation_version: cs.calculationVersion,
+          calculated_at: cs.calculatedAt,
+        };
+        const existing = latestByCategoryId.get(cs.categoryId);
+        if (existing) {
+          const { error } = await db.from("category_scores").update(payload).eq("id", existing.id);
+          if (error) throw new Error(`category_scores update failed for ${cs.categoryKey}: ${error.message}`);
+        } else {
+          const { error } = await db.from("category_scores").insert(payload);
+          if (error) throw new Error(`category_scores insert failed for ${cs.categoryKey}: ${error.message}`);
+        }
+      }
+    },
+  };
+}
