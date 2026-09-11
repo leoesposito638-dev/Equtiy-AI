@@ -7,8 +7,9 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { buildProviderRegistry } from "../src/providers/registry";
-import { unavailableMarketDataProvider, unavailableFinancialDataProvider } from "../src/providers/adapters/unavailableProvider";
+import { unavailableMarketDataProvider, unavailableFinancialDataProvider, unavailableEarningsProvider } from "../src/providers/adapters/unavailableProvider";
 import { FmpMarketDataAdapter } from "../src/providers/adapters/fmpMarketDataAdapter";
+import { FmpEarningsAdapter } from "../src/providers/adapters/fmpEarningsAdapter";
 
 const ORIGINAL_FMP_KEY = process.env.FMP_API_KEY;
 const ORIGINAL_SEC_UA = process.env.SEC_EDGAR_USER_AGENT;
@@ -41,5 +42,19 @@ describe("buildProviderRegistry — marketData conditional registration (Milesto
     // honest-unavailable principle, unrelated code path from marketData.
     expect(registry.marketData).toBe(unavailableMarketDataProvider);
     expect(registry.financialData).toBe(unavailableFinancialDataProvider);
+  });
+});
+
+describe("buildProviderRegistry — earnings conditional registration (Milestone 13H)", () => {
+  it("falls back to unavailableEarningsProvider when FMP_API_KEY is absent", () => {
+    delete process.env.FMP_API_KEY;
+    const registry = buildProviderRegistry();
+    expect(registry.earnings).toBe(unavailableEarningsProvider);
+  });
+
+  it("registers a real FmpEarningsAdapter when FMP_API_KEY is present", () => {
+    process.env.FMP_API_KEY = "test-key-for-registry-test";
+    const registry = buildProviderRegistry();
+    expect(registry.earnings).toBeInstanceOf(FmpEarningsAdapter);
   });
 });

@@ -42,6 +42,7 @@
 // ============================================================================
 
 import type {
+  LivePrice,
   MarketDataProvider,
   ProviderCompanyRef,
   ProviderResult,
@@ -95,6 +96,18 @@ interface FmpKeyMetricsTtmRow {
   evToEBITDATTM?: number;
   evToSalesTTM?: number;
   freeCashFlowYieldTTM?: number;
+}
+
+/** Shape of FMP's GET /quote response (an array). This is the LIVE quote
+ *  endpoint — deliberately NOT used by getQuote() above (see that method's
+ *  own comment and this file's header). Only the two fields getLivePrice()
+ *  reads are declared; the real response also has changePercentage, volume,
+ *  dayLow/High, yearLow/High, marketCap, priceAvg50/200, exchange, open,
+ *  previousClose (verified live, Milestone 13G Part E), all unused here. */
+interface FmpQuoteRow {
+  symbol?: string;
+  price?: number;
+  timestamp?: number; // unix seconds, verified live (e.g. 1789055787)
 }
 
 async function fmpGet<T>(path: string, apiKey: string): Promise<{ ok: true; body: T; redactedUrl: string } | { ok: false; reason: string }> {
@@ -251,6 +264,43 @@ export class FmpMarketDataAdapter implements MarketDataProvider {
         providerName: "Financial Modeling Prep",
         providerType: "MARKET_DATA",
         sourceUrl: (ratiosResult.ok ? ratiosResult.redactedUrl : (keyMetricsResult as { ok: true; redactedUrl: string }).redactedUrl),
+        currency: "USD",
+      },
+    };
+  }
+
+  /** Milestone 13H. Sourced from /stable/quote — a genuinely live price,
+   *  confirmed live against NVDA to carry today's actual timestamp (unlike
+   *  getQuote()'s enterprise-values price, which is tagged to the last
+   *  annual reporting period). Never used to backfill Quote.enterpriseValue
+   *  or any TTM ratio above — this method exists solely for Forward P/E's
+   *  numerator. */
+  async getLivePrice(ref: ProviderCompanyRef): Promise<ProviderResult<LivePrice>> {
+    const result = await fmpGet<FmpQuoteRow[]>(`/quote?symbol=${encodeURIComponent(ref.ticker)}`, this.apiKey);
+    if (!result.ok) {
+      return { status: "unavailable", data: null, source: null, unavailableReason: result.reason };
+    }
+
+    const row = Array.isArray(result.body) ? result.body[0] : undefined;
+    if (!row || typeof row.price !== "number" || typeof row.timestamp !== "number") {
+      return {
+        status: "unavailable",
+        data: null,
+        source: null,
+        unavailableReason: `FMP returned no usable /quote row for ${ref.ticker} at ${result.redactedUrl}.`,
+      };
+    }
+
+    const timestamp = new Date(row.timestamp * 1000).toISOString();
+
+    return {
+      status: "available",
+      data: { price: row.price, timestamp },
+      source: {
+        providerName: "Financial Modeling Prep",
+        providerType: "MARKET_DATA",
+        sourceUrl: result.redactedUrl,
+        publishedAt: timestamp,
         currency: "USD",
       },
     };

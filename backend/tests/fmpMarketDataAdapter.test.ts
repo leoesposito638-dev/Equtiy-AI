@@ -171,6 +171,75 @@ describe("FmpMarketDataAdapter.getValuationRatios — TTM ratio parsing", () => 
   });
 });
 
+describe("FmpMarketDataAdapter.getLivePrice — Milestone 13H, sourced from /stable/quote", () => {
+  it("maps a well-formed /quote row to a LivePrice, converting unix-seconds timestamp to ISO", async () => {
+    mockRoutedFetch({
+      "/quote": {
+        status: 200,
+        body: [{ symbol: "NVDA", price: 218.73, timestamp: 1789055787 }],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getLivePrice({ ticker: "NVDA" });
+
+    expect(result.status).toBe("available");
+    expect(result.data?.price).toBe(218.73);
+    expect(result.data?.timestamp).toBe(new Date(1789055787 * 1000).toISOString());
+    expect(result.source?.providerType).toBe("MARKET_DATA");
+  });
+
+  it("never includes the API key in the returned source URL", async () => {
+    mockRoutedFetch({ "/quote": { status: 200, body: [{ price: 1, timestamp: 1700000000 }] } });
+    const adapter = new FmpMarketDataAdapter("super-secret-key");
+    const result = await adapter.getLivePrice({ ticker: "NVDA" });
+    expect(result.source?.sourceUrl).not.toContain("super-secret-key");
+  });
+
+  it("calls /quote, not /enterprise-values — a genuinely separate live-price source, never a reinterpretation of the period-end price", async () => {
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url.includes("/quote")) {
+        return { ok: true, status: 200, json: async () => [{ price: 218.73, timestamp: 1789055787 }], text: async () => "" };
+      }
+      return { ok: false, status: 404, json: async () => ({}), text: async () => "" };
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const adapter = new FmpMarketDataAdapter("test-key");
+    await adapter.getLivePrice({ ticker: "NVDA" });
+    const calledUrls = fetchSpy.mock.calls.map((c) => c[0] as string);
+    expect(calledUrls.some((u) => u.includes("/quote"))).toBe(true);
+    expect(calledUrls.some((u) => u.includes("/enterprise-values"))).toBe(false);
+  });
+
+  it("returns unavailable, not a fabricated price, on HTTP 402 (subscription-gated symbol)", async () => {
+    mockRoutedFetch({ "/quote": { status: 402, body: { error: "Premium Query Parameter" } } });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getLivePrice({ ticker: "TXN" });
+    expect(result.status).toBe("unavailable");
+    expect(result.data).toBeNull();
+    expect(result.unavailableReason).toContain("402");
+  });
+
+  it("returns unavailable when /quote returns an empty array", async () => {
+    mockRoutedFetch({ "/quote": { status: 200, body: [] } });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getLivePrice({ ticker: "NVDA" });
+    expect(result.status).toBe("unavailable");
+  });
+
+  it("getQuote() and getValuationRatios() are unaffected by getLivePrice existing — Milestone 13F behavior is unchanged", async () => {
+    mockRoutedFetch({
+      "enterprise-values": {
+        status: 200,
+        body: [{ date: "2026-01-25", stockPrice: 186.47, numberOfShares: 24_359_000_000, marketCapitalization: 4_542_222_730_000, enterpriseValue: 4_543_029_730_000 }],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getQuote({ ticker: "NVDA" });
+    expect(result.status).toBe("available");
+    expect(result.data?.price).toBe(186.47); // still the period-end price, not a live one
+  });
+});
+
 describe("FmpMarketDataAdapter.getHistoricalPrices — out of scope this milestone", () => {
   it("returns an honest unavailable, never a fabricated series", async () => {
     const adapter = new FmpMarketDataAdapter("test-key");

@@ -47,6 +47,9 @@ export const unavailableMarketDataProvider: MarketDataProvider = {
   async getValuationRatios(_ref: ProviderCompanyRef) {
     return unavailable();
   },
+  async getLivePrice(_ref: ProviderCompanyRef) {
+    return unavailable();
+  },
 };
 
 export const unavailableFinancialDataProvider: FinancialDataProvider = {

@@ -14,6 +14,7 @@ import {
 } from "./adapters/unavailableProvider";
 import { FmpFinancialDataAdapter } from "./adapters/fmpAdapter";
 import { FmpMarketDataAdapter } from "./adapters/fmpMarketDataAdapter";
+import { FmpEarningsAdapter } from "./adapters/fmpEarningsAdapter";
 import { SecEdgarAdapter } from "./adapters/secEdgarAdapter";
 import { ProviderResolver } from "./resolver";
 import type {
@@ -61,10 +62,18 @@ export function buildProviderRegistry(): ProviderRegistry {
     ? new FmpMarketDataAdapter(process.env.FMP_API_KEY)
     : unavailableMarketDataProvider;
 
+  // Milestone 13H: earnings resolves to a real FMP-backed adapter (forward
+  // consensus estimates only — see FmpEarningsAdapter's own header) only
+  // when FMP_API_KEY is present, same conditional-construction pattern as
+  // marketData above, same honest unavailable fallback when it isn't.
+  const earnings = process.env.FMP_API_KEY
+    ? new FmpEarningsAdapter(process.env.FMP_API_KEY)
+    : unavailableEarningsProvider;
+
   return {
     marketData,
     financialData,
-    earnings: unavailableEarningsProvider,
+    earnings,
     news: unavailableNewsProvider,
     filings: unavailableFilingProvider,
   };

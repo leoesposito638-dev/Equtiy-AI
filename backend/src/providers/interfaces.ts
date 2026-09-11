@@ -99,6 +99,23 @@ export interface EstimateRecord {
   analystCount: number | null;
 }
 
+/** Milestone 13H. A live/current market price — deliberately a SEPARATE
+ *  shape from Quote, never a reinterpretation of Quote.price. Quote (see
+ *  above) is period-tagged to the vendor's last reporting-period bundle
+ *  (Milestone 13F's enterprise-values source) and is correct for TRAILING
+ *  valuation (price as of the same period as the trailing EPS/EBITDA it's
+ *  divided by). Forward P/E needs the opposite: today's price divided by a
+ *  FUTURE consensus estimate — reusing Quote.price there would silently
+ *  mismatch two different reference dates (verified live, Milestone 13G
+ *  Part E: NVDA's enterprise-values price was ~7 months stale relative to
+ *  its live price, a ~17% difference). Kept as its own interface method
+ *  rather than adding a field to Quote so existing Quote consumers/tests
+ *  are unaffected. */
+export interface LivePrice {
+  price: number;
+  timestamp: string;
+}
+
 export interface NewsItem {
   title: string;
   description?: string;
@@ -131,6 +148,9 @@ export interface MarketDataProvider {
   ): Promise<ProviderResult<Array<{ date: string; close: number; volume: number }>>>;
   /** Milestone 13F. */
   getValuationRatios(ref: ProviderCompanyRef): Promise<ProviderResult<ValuationRatios>>;
+  /** Milestone 13H — see LivePrice's doc comment for why this is not just
+   *  Quote.price. */
+  getLivePrice(ref: ProviderCompanyRef): Promise<ProviderResult<LivePrice>>;
 }
 
 export interface FinancialDataProvider {
