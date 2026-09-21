@@ -78,6 +78,26 @@ const TREND_METRIC_SOURCE: Record<string, string> = {
   net_debt_trend: "net_debt",
 };
 
+/** Milestone 14B — EARNINGS_MOMENTUM's surprise metrics are QUARTERLY facts
+ *  (Milestone 14A's explicit architecture finding: this repo's history
+ *  query hardcoded period_type='ANNUAL', which is correct for every metric
+ *  that exists today but wrong for eps_surprise_percent/
+ *  revenue_surprise_percent). This map is the smallest change that fixes
+ *  that without touching scoringEngine.ts or scoreCategory.ts (both stay
+ *  completely unaware of period type, exactly as before) and without
+ *  making every rule quarterly: any metric_name NOT listed here keeps
+ *  reading period_type='ANNUAL', unchanged. The map is explicit — a named
+ *  lookup by exact metric_name, never inferred from the name's text (e.g.
+ *  never "contains 'surprise'") — so a new metric_name defaults safely to
+ *  ANNUAL unless deliberately added here. Same shape/location as
+ *  TREND_METRIC_SOURCE above, which already established this "small
+ *  explicit map lives next to the query it adjusts" pattern in this exact
+ *  file. */
+const METRIC_PERIOD_TYPE: Record<string, "ANNUAL" | "QUARTER"> = {
+  eps_surprise_percent: "QUARTER",
+  revenue_surprise_percent: "QUARTER",
+};
+
 export function buildSupabaseScoringRepo(): ScoringRepo {
   const db = getDbClient();
 
@@ -102,15 +122,16 @@ export function buildSupabaseScoringRepo(): ScoringRepo {
       // complex batched-and-grouped query.
       for (const metricName of metricNames) {
         const sourceMetricName = TREND_METRIC_SOURCE[metricName] ?? metricName;
+        const periodType = METRIC_PERIOD_TYPE[metricName] ?? "ANNUAL";
         const { data, error } = await db
           .from("calculated_metrics")
           .select("period_end, value")
           .eq("company_id", companyId)
           .eq("metric_name", sourceMetricName)
-          .eq("period_type", "ANNUAL")
+          .eq("period_type", periodType)
           .order("period_end", { ascending: false })
           .limit(MAX_HISTORY_PERIODS);
-        if (error) throw new Error(`calculated_metrics query failed for ${sourceMetricName}: ${error.message}`);
+        if (error) throw new Error(`calculated_metrics query failed for ${sourceMetricName} (${periodType}): ${error.message}`);
 
         const rows = (data ?? [])
           .filter((r: { value: number | null }) => r.value !== null)
