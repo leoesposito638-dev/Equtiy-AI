@@ -16,7 +16,7 @@
 // documented — but until now unimplemented — in secEdgarAdapter.ts). debt_trend
 // and net_debt_trend need no new code here: like margin_trend before them,
 // they are TREND rules over total_debt's/net_debt's own stored history,
-// wired via supabaseScoringRepo.ts's TREND_METRIC_SOURCE alias map.
+// wired via supabaseScoringRepo.ts's METRIC_SOURCE_ALIAS map.
 //
 // Milestone 13E added invested_capital, effective_tax_rate, and roic below,
 // per the product-authorized methodology from Milestone 13B/13D (Invested
@@ -26,7 +26,7 @@
 // operations concepts; ROIC reuses metrics.ts's existing, unmodified roic()
 // formula). roic_persistence needs no new code here: like margin_trend and
 // debt_trend before it, it is a TREND rule over roic's own stored history,
-// already wired via supabaseScoringRepo.ts's TREND_METRIC_SOURCE alias map.
+// already wired via supabaseScoringRepo.ts's METRIC_SOURCE_ALIAS map.
 //
 // Deliberately still NOT implemented here (see Milestone 12B/13A/13B reports
 // for the full reasoning — each remains a genuine STOP, not an oversight):

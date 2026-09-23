@@ -445,3 +445,110 @@ describe("FmpMarketDataAdapter.getHistoricalPrices — Milestone 14D.1, unsettle
     expect(result.data?.map((p) => p.date)).toEqual(["2026-09-21", "2026-09-22"]);
   });
 });
+
+describe("FmpMarketDataAdapter.getDebtMetricsHistory — Milestone 15C, FMP-only balance-sheet + income-statement facts", () => {
+  it("happy path: maps real-shaped, period-aligned rows into FmpDebtMetricsPeriod[]", async () => {
+    mockRoutedFetch({
+      "/balance-sheet-statement": {
+        status: 200,
+        body: [
+          { symbol: "NVDA", date: "2026-01-25", totalDebt: 11_412_000_000, cashAndCashEquivalents: 10_605_000_000, totalStockholdersEquity: 157_293_000_000 },
+          { symbol: "NVDA", date: "2025-01-26", totalDebt: 9_500_000_000, cashAndCashEquivalents: 8_100_000_000, totalStockholdersEquity: 120_000_000_000 },
+        ],
+      },
+      "/income-statement": {
+        status: 200,
+        body: [
+          { symbol: "NVDA", date: "2026-01-25", operatingIncome: 130_387_000_000, depreciationAndAmortization: 2_843_000_000, ebitda: 144_552_000_000 },
+          { symbol: "NVDA", date: "2025-01-26", operatingIncome: 100_000_000_000, depreciationAndAmortization: 2_000_000_000, ebitda: 999_999_999_999 },
+        ],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getDebtMetricsHistory({ ticker: "NVDA" });
+
+    expect(result.status).toBe("available");
+    expect(result.data).toHaveLength(2);
+    expect(result.data?.[0]).toEqual({
+      periodEnd: "2026-01-25",
+      totalDebt: 11_412_000_000,
+      cashAndCashEquivalents: 10_605_000_000,
+      totalStockholdersEquity: 157_293_000_000,
+      operatingIncome: 130_387_000_000,
+      depreciationAndAmortization: 2_843_000_000,
+    });
+    // FMP's own `ebitda` field must never leak into the returned shape —
+    // the caller (calculations/fmpDebtMetrics.ts) computes it itself.
+    expect(Object.keys(result.data![0]!)).not.toContain("ebitda");
+  });
+
+  it("a balance-sheet row with no matching income-statement date is dropped, never paired across fiscal years", async () => {
+    mockRoutedFetch({
+      "/balance-sheet-statement": {
+        status: 200,
+        body: [
+          { symbol: "NVDA", date: "2026-01-25", totalDebt: 11_412_000_000, cashAndCashEquivalents: 10_605_000_000, totalStockholdersEquity: 157_293_000_000 },
+          { symbol: "NVDA", date: "2024-01-28", totalDebt: 8_000_000_000, cashAndCashEquivalents: 5_000_000_000, totalStockholdersEquity: 90_000_000_000 }, // no matching IS row
+        ],
+      },
+      "/income-statement": {
+        status: 200,
+        body: [{ symbol: "NVDA", date: "2026-01-25", operatingIncome: 130_387_000_000, depreciationAndAmortization: 2_843_000_000 }],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getDebtMetricsHistory({ ticker: "NVDA" });
+    expect(result.status).toBe("available");
+    expect(result.data).toHaveLength(1);
+    expect(result.data?.[0]?.periodEnd).toBe("2026-01-25");
+  });
+
+  it("a row missing a required field on either statement is skipped, never filled with a substitute", async () => {
+    mockRoutedFetch({
+      "/balance-sheet-statement": {
+        status: 200,
+        body: [{ symbol: "NVDA", date: "2026-01-25", totalDebt: 11_412_000_000, cashAndCashEquivalents: 10_605_000_000 }], // missing totalStockholdersEquity
+      },
+      "/income-statement": {
+        status: 200,
+        body: [{ symbol: "NVDA", date: "2026-01-25", operatingIncome: 130_387_000_000, depreciationAndAmortization: 2_843_000_000 }],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getDebtMetricsHistory({ ticker: "NVDA" });
+    expect(result.status).toBe("unavailable");
+    expect(result.data).toBeNull();
+  });
+
+  it("returns unavailable, not fabricated data, on HTTP 402 (subscription-gated symbol)", async () => {
+    mockRoutedFetch({
+      "/balance-sheet-statement": { status: 402, body: { error: "Premium Query Parameter" } },
+      "/income-statement": { status: 402, body: { error: "Premium Query Parameter" } },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getDebtMetricsHistory({ ticker: "TXN" });
+    expect(result.status).toBe("unavailable");
+    expect(result.data).toBeNull();
+    expect(result.unavailableReason).toContain("402");
+  });
+
+  it("returns unavailable when no periods align between the two statements at all", async () => {
+    mockRoutedFetch({
+      "/balance-sheet-statement": { status: 200, body: [{ symbol: "NVDA", date: "2026-01-25", totalDebt: 1, cashAndCashEquivalents: 1, totalStockholdersEquity: 1 }] },
+      "/income-statement": { status: 200, body: [{ symbol: "NVDA", date: "2025-01-26", operatingIncome: 1, depreciationAndAmortization: 1 }] },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getDebtMetricsHistory({ ticker: "NVDA" });
+    expect(result.status).toBe("unavailable");
+  });
+
+  it("never includes the API key in the returned source URL", async () => {
+    mockRoutedFetch({
+      "/balance-sheet-statement": { status: 200, body: [{ date: "2026-01-25", totalDebt: 1, cashAndCashEquivalents: 1, totalStockholdersEquity: 1 }] },
+      "/income-statement": { status: 200, body: [{ date: "2026-01-25", operatingIncome: 1, depreciationAndAmortization: 1 }] },
+    });
+    const adapter = new FmpMarketDataAdapter("super-secret-key");
+    const result = await adapter.getDebtMetricsHistory({ ticker: "NVDA" });
+    expect(result.source?.sourceUrl).not.toContain("super-secret-key");
+  });
+});

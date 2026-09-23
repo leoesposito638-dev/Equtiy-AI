@@ -51,6 +51,7 @@
 
 import type {
   DailyPrice,
+  FmpDebtMetricsPeriod,
   LivePrice,
   MarketDataProvider,
   ProviderCompanyRef,
@@ -118,6 +119,34 @@ interface FmpQuoteRow {
   symbol?: string;
   price?: number;
   timestamp?: number; // unix seconds, verified live (e.g. 1789055787)
+}
+
+/** Shape of one element of FMP's GET /balance-sheet-statement response.
+ *  Only the fields getDebtMetricsHistory() reads are declared — the real
+ *  response has many more. `date` is the fiscal period end (e.g.
+ *  "2026-01-25"); verified live (Milestone 15C) to always match the
+ *  income-statement row's own `date` for the same fiscal year, for every
+ *  FMP-entitled company sampled. */
+interface FmpBalanceSheetRow {
+  symbol?: string;
+  date?: string;
+  totalDebt?: number;
+  cashAndCashEquivalents?: number;
+  totalStockholdersEquity?: number;
+}
+
+/** Shape of one element of FMP's GET /income-statement response, re-declared
+ *  here (fmpAdapter.ts has its own, differently-scoped version for the
+ *  canonical revenue/net_income/eps pipeline) because this adapter reads
+ *  DIFFERENT fields (operatingIncome, depreciationAndAmortization) for a
+ *  different purpose (EBITDA for the debt metrics, never for canonical
+ *  financial_metrics). Deliberately does NOT read FMP's own `ebitda` field
+ *  — see this file's getDebtMetricsHistory() doc comment for why. */
+interface FmpIncomeStatementRow {
+  symbol?: string;
+  date?: string;
+  operatingIncome?: number;
+  depreciationAndAmortization?: number;
 }
 
 /** Shape of one element of FMP's GET /historical-price-eod/dividend-adjusted
@@ -402,6 +431,99 @@ export class FmpMarketDataAdapter implements MarketDataProvider {
         providerType: "MARKET_DATA",
         sourceUrl: result.redactedUrl,
         publishedAt: timestamp,
+        currency: "USD",
+      },
+    };
+  }
+
+  /** Milestone 15C. Fetches up to 4 fiscal years of balance-sheet +
+   *  income-statement facts from FMP alone, for the debt-derived metrics
+   *  (total_debt_fmp/net_debt_fmp/debt_to_equity_fmp/net_debt_to_ebitda_fmp
+   *  — see calculations/fmpDebtMetrics.ts). Only rows present in BOTH
+   *  responses under the SAME `date` are returned — never assembled from a
+   *  balance-sheet row of one fiscal year paired with an income-statement
+   *  row of another. Every returned field is exactly what FMP reported; a
+   *  row missing any required field from either statement is skipped, not
+   *  filled with a substitute.
+   *
+   *  Deliberately reads operatingIncome + depreciationAndAmortization, NOT
+   *  FMP's own `ebitda` field — confirmed live (Milestone 15C investigation)
+   *  that FMP's ebitda uses a different formula than this codebase's
+   *  existing EBITDA definition (operating_income + depreciation_
+   *  amortization, calculations/fundamentalRatios.ts's computeEbitda): for
+   *  NVDA, FMP's ebitda was ~144.55B against ~133.23B for operatingIncome +
+   *  depreciationAndAmortization — an 11B gap this adapter does not paper
+   *  over by picking whichever number is convenient. Reading the two raw
+   *  components and letting calculations/fmpDebtMetrics.ts apply the SAME
+   *  formula as the SEC-based path keeps the methodology identical across
+   *  both data sources, even though the underlying facts differ. */
+  async getDebtMetricsHistory(ref: ProviderCompanyRef): Promise<ProviderResult<FmpDebtMetricsPeriod[]>> {
+    const [bsResult, isResult] = await Promise.all([
+      fmpGet<FmpBalanceSheetRow[]>(`/balance-sheet-statement?symbol=${encodeURIComponent(ref.ticker)}&limit=4`, this.apiKey),
+      fmpGet<FmpIncomeStatementRow[]>(`/income-statement?symbol=${encodeURIComponent(ref.ticker)}&limit=4`, this.apiKey),
+    ]);
+
+    if (!bsResult.ok || !isResult.ok) {
+      return {
+        status: "unavailable",
+        data: null,
+        source: null,
+        unavailableReason: `${bsResult.ok ? "" : bsResult.reason} ${isResult.ok ? "" : isResult.reason}`.trim(),
+      };
+    }
+
+    if (!Array.isArray(bsResult.body) || !Array.isArray(isResult.body)) {
+      return {
+        status: "unavailable",
+        data: null,
+        source: null,
+        unavailableReason: `FMP returned a non-array balance-sheet-statement or income-statement response for ${ref.ticker}.`,
+      };
+    }
+
+    const isByDate = new Map(isResult.body.filter((r) => r.date).map((r) => [r.date as string, r]));
+    const periods: FmpDebtMetricsPeriod[] = [];
+
+    for (const bsRow of bsResult.body) {
+      if (!bsRow.date) continue;
+      const isRow = isByDate.get(bsRow.date);
+      if (!isRow) continue; // no income-statement row for this exact fiscal date — never paired across periods
+
+      const fields = {
+        totalDebt: bsRow.totalDebt,
+        cashAndCashEquivalents: bsRow.cashAndCashEquivalents,
+        totalStockholdersEquity: bsRow.totalStockholdersEquity,
+        operatingIncome: isRow.operatingIncome,
+        depreciationAndAmortization: isRow.depreciationAndAmortization,
+      };
+      if (Object.values(fields).some((v) => typeof v !== "number")) continue; // any missing field -> skip this period entirely
+
+      periods.push({
+        periodEnd: bsRow.date,
+        totalDebt: fields.totalDebt!,
+        cashAndCashEquivalents: fields.cashAndCashEquivalents!,
+        totalStockholdersEquity: fields.totalStockholdersEquity!,
+        operatingIncome: fields.operatingIncome!,
+        depreciationAndAmortization: fields.depreciationAndAmortization!,
+      });
+    }
+
+    if (periods.length === 0) {
+      return {
+        status: "unavailable",
+        data: null,
+        source: null,
+        unavailableReason: `No period-aligned balance-sheet + income-statement rows found for ${ref.ticker} at ${bsResult.redactedUrl}.`,
+      };
+    }
+
+    return {
+      status: "available",
+      data: periods,
+      source: {
+        providerName: "Financial Modeling Prep",
+        providerType: "MARKET_DATA",
+        sourceUrl: bsResult.redactedUrl,
         currency: "USD",
       },
     };

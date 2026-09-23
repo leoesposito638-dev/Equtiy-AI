@@ -5,7 +5,7 @@
 // For every active score_rules row (SCORING_VERSION), resolves the exact
 // (source metric_name, period_type) pair supabaseScoringRepo.ts's real
 // getMetricInputs() query would use — reusing its own exported
-// TREND_METRIC_SOURCE/METRIC_PERIOD_TYPE maps rather than a hand-copied
+// METRIC_SOURCE_ALIAS/METRIC_PERIOD_TYPE maps rather than a hand-copied
 // duplicate, so this script can never silently drift from the engine's
 // actual behavior — then reports, per category and per company in the
 // 30-company demo universe, how many of that category's rules have real,
@@ -26,7 +26,7 @@
 import { getDbClient } from "../db/client";
 import { fetchAllPaginated } from "../db/paginate";
 import { SCORING_VERSION } from "../scoring/scoringEngine";
-import { TREND_METRIC_SOURCE, METRIC_PERIOD_TYPE } from "../scoring/supabaseScoringRepo";
+import { METRIC_SOURCE_ALIAS, METRIC_PERIOD_TYPE } from "../scoring/supabaseScoringRepo";
 import { DEMO_TICKERS } from "../config/demoUniverse";
 
 const NEVER_IMPLEMENTED = new Set([
@@ -47,7 +47,7 @@ async function main() {
   // ---- Part 1-style period_type mismatch check ----
   const pairs = new Set<string>();
   for (const r of rules as any[]) {
-    const source = TREND_METRIC_SOURCE[r.metric_name] ?? r.metric_name;
+    const source = METRIC_SOURCE_ALIAS[r.metric_name] ?? r.metric_name;
     const periodType = METRIC_PERIOD_TYPE[r.metric_name] ?? "ANNUAL";
     pairs.add(`${source}|${periodType}`);
   }
@@ -86,7 +86,7 @@ async function main() {
     let presentCells = 0;
     let totalCells = 0;
     for (const rule of catRules) {
-      const source = TREND_METRIC_SOURCE[rule.metric_name] ?? rule.metric_name;
+      const source = METRIC_SOURCE_ALIAS[rule.metric_name] ?? rule.metric_name;
       const periodType = METRIC_PERIOD_TYPE[rule.metric_name] ?? "ANNUAL";
       const presentSet = coverageByPair.get(`${source}|${periodType}`) ?? new Set();
       const presentDemo = demoCompanies.filter((c) => presentSet.has(c.id));

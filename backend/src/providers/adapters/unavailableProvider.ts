@@ -50,6 +50,9 @@ export const unavailableMarketDataProvider: MarketDataProvider = {
   async getLivePrice(_ref: ProviderCompanyRef) {
     return unavailable();
   },
+  async getDebtMetricsHistory(_ref: ProviderCompanyRef) {
+    return unavailable();
+  },
 };
 
 export const unavailableFinancialDataProvider: FinancialDataProvider = {

@@ -55,31 +55,58 @@ const MAX_HISTORY_PERIODS = 20;
 // can mirror this repo's exact query resolution instead of duplicating it —
 // a hand-copied duplicate would silently drift the moment either map
 // changes again.
-/** Milestone 12D: TREND rules that score the trend of an ALREADY-COMPUTED
- *  metric's own stored history, under a different score_rules metric_name.
- *  This mapping is not a new formula — it is exactly what
- *  fundamentalRatios.ts already documents at the top of that file:
- *  "margin_trend, gross_margin_stability, roic_persistence: these are TREND
- *  rules over an already-computed metric's OWN stored history (net_margin,
- *  gross_margin, roic respectively) — scoreCategory.ts's existing generic
- *  TREND handling already covers them with zero new code, once/if that
- *  underlying metric has enough stored periods." This map is the missing
- *  wiring: it redirects which calculated_metrics rows a TREND rule reads,
- *  while still keying the result under the rule's own metric_name so
+/** Milestone 12D: originally just TREND rules that score the trend of an
+ *  ALREADY-COMPUTED metric's own stored history, under a different
+ *  score_rules metric_name — renamed from TREND_METRIC_SOURCE (Milestone
+ *  15C) once it started redirecting PERCENTILE rules too (see the debt
+ *  entries below); the underlying mechanism was never TREND-specific, only
+ *  every entry added before 15C happened to be. This mapping is not a new
+ *  formula — it is exactly what fundamentalRatios.ts already documents at
+ *  the top of that file: "margin_trend, gross_margin_stability,
+ *  roic_persistence: these are TREND rules over an already-computed
+ *  metric's OWN stored history (net_margin, gross_margin, roic
+ *  respectively) — scoreCategory.ts's existing generic TREND handling
+ *  already covers them with zero new code, once/if that underlying metric
+ *  has enough stored periods." This map is the missing wiring: it
+ *  redirects which calculated_metrics rows a rule reads, while still
+ *  keying the result under the rule's own metric_name so
  *  scoreCategory.ts's `ctx.metrics.get(rule.metricName)` finds it.
  *  roic_persistence maps to "roic", which has no stored rows (roic is not
  *  computed — no invested-capital methodology exists in this repository,
  *  see Milestone 12B/12D reports) — this correctly yields no data rather
  *  than being special-cased, exactly like any other genuinely missing
- *  metric. Milestone 13C added debt_trend -> total_debt and
- *  net_debt_trend -> net_debt, the same pattern applied to the debt-derived
- *  metrics newly computed in fundamentalRatios.ts. */
-export const TREND_METRIC_SOURCE: Record<string, string> = {
+ *  metric.
+ *
+ *  Milestone 15B/15C — debt metrics, two generations:
+ *  Milestone 13C added debt_trend -> total_debt and net_debt_trend ->
+ *  net_debt (SEC-sourced, still real for AMZN/JNJ only — see Milestone
+ *  15B's period-alignment finding). Milestone 15C then added FMP-sourced
+ *  debt metrics (total_debt_fmp/net_debt_fmp/debt_to_equity_fmp/
+ *  net_debt_to_ebitda_fmp — see ingestFmpDebtMetrics.ts) for all 16
+ *  FMP-entitled companies, INCLUDING AMZN/JNJ, whose old SEC-sourced rows
+ *  under the plain "total_debt"/"net_debt"/"debt_to_equity"/
+ *  "net_debt_to_ebitda" metric_names are deliberately left stored,
+ *  untouched, but no longer read by scoring at all — debt_trend,
+ *  net_debt_trend, debt_to_equity, and net_debt_to_ebitda were
+ *  repointed here to the "_fmp" metric_names for every company, with no
+ *  per-company branching. This is the entire enforcement mechanism for
+ *  "never mix SEC and FMP values for the same metric": the plain
+ *  ("total_debt" etc.) and "_fmp" metric_names are two completely
+ *  separate keys in calculated_metrics, and after this change nothing in
+ *  the scoring path ever reads the plain ones again, for any company —
+ *  the SEC rows aren't merged, filtered, or reconciled with the FMP rows,
+ *  they are simply never queried post-15C. See
+ *  tests/supabaseScoringRepoFmpDebtAlias.test.ts, which proves this
+ *  directly against a fixture where BOTH an SEC row and an FMP row exist
+ *  for the same company or under the same rule. */
+export const METRIC_SOURCE_ALIAS: Record<string, string> = {
   margin_trend: "net_margin",
   gross_margin_stability: "gross_margin",
   roic_persistence: "roic",
-  debt_trend: "total_debt",
-  net_debt_trend: "net_debt",
+  debt_trend: "total_debt_fmp",
+  net_debt_trend: "net_debt_fmp",
+  debt_to_equity: "debt_to_equity_fmp",
+  net_debt_to_ebitda: "net_debt_to_ebitda_fmp",
 };
 
 /** Milestone 14B — EARNINGS_MOMENTUM's surprise metrics are QUARTERLY facts
@@ -94,7 +121,7 @@ export const TREND_METRIC_SOURCE: Record<string, string> = {
  *  lookup by exact metric_name, never inferred from the name's text (e.g.
  *  never "contains 'surprise'") — so a new metric_name defaults safely to
  *  ANNUAL unless deliberately added here. Same shape/location as
- *  TREND_METRIC_SOURCE above, which already established this "small
+ *  METRIC_SOURCE_ALIAS above, which already established this "small
  *  explicit map lives next to the query it adjusts" pattern in this exact
  *  file.
  *
@@ -113,7 +140,7 @@ export const TREND_METRIC_SOURCE: Record<string, string> = {
  *  the user), so a schema change is real added friction for what is really
  *  a fact about how ONE ingestion file (ingestValuationData.ts) happens to
  *  store its rows; and (2) this exact file already established, with
- *  TREND_METRIC_SOURCE and this map's own QUARTER entries, that "which
+ *  METRIC_SOURCE_ALIAS and this map's own QUARTER entries, that "which
  *  period_type/source metric a rule's data actually lives under" is
  *  treated as a small explicit code-level lookup collocated with the query
  *  it adjusts, not DB-level score_rules configuration — score_rules stays
@@ -153,7 +180,7 @@ export function buildSupabaseScoringRepo(): ScoringRepo {
       // metric's history independently ordered/limited without a more
       // complex batched-and-grouped query.
       for (const metricName of metricNames) {
-        const sourceMetricName = TREND_METRIC_SOURCE[metricName] ?? metricName;
+        const sourceMetricName = METRIC_SOURCE_ALIAS[metricName] ?? metricName;
         const periodType = METRIC_PERIOD_TYPE[metricName] ?? "ANNUAL";
         const { data, error } = await db
           .from("calculated_metrics")

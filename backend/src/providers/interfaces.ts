@@ -78,6 +78,22 @@ export interface ValuationRatios {
   fcfYield: number | null;
 }
 
+/** Milestone 15C — one fiscal year of FMP's own balance-sheet-statement +
+ *  income-statement facts, ALREADY period-aligned by FMP itself (both
+ *  statements share the same `date`/fiscal year for a real 10-K filing —
+ *  confirmed live for every FMP-entitled company). Every field here comes
+ *  from FMP alone; this type exists specifically so the debt-metric
+ *  calculations built on it are never tempted to reach for a SEC-sourced
+ *  value to fill a gap — see calculations/fmpDebtMetrics.ts. */
+export interface FmpDebtMetricsPeriod {
+  periodEnd: string;
+  totalDebt: number | null;
+  cashAndCashEquivalents: number | null;
+  totalStockholdersEquity: number | null;
+  operatingIncome: number | null;
+  depreciationAndAmortization: number | null;
+}
+
 export interface EarningsRecord {
   periodStart?: string;
   periodEnd: string;
@@ -176,6 +192,12 @@ export interface MarketDataProvider {
   /** Milestone 13H — see LivePrice's doc comment for why this is not just
    *  Quote.price. */
   getLivePrice(ref: ProviderCompanyRef): Promise<ProviderResult<LivePrice>>;
+  /** Milestone 15C — real, historical (up to 4 fiscal years) balance-sheet +
+   *  income-statement facts sourced ONLY from FMP, for the debt-derived
+   *  metrics (total_debt_fmp/net_debt_fmp/debt_to_equity_fmp/
+   *  net_debt_to_ebitda_fmp) — never SEC EDGAR. See FmpDebtMetricsPeriod's
+   *  own doc comment. */
+  getDebtMetricsHistory(ref: ProviderCompanyRef): Promise<ProviderResult<FmpDebtMetricsPeriod[]>>;
 }
 
 export interface FinancialDataProvider {
