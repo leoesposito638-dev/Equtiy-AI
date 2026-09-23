@@ -92,10 +92,38 @@ const TREND_METRIC_SOURCE: Record<string, string> = {
  *  ANNUAL unless deliberately added here. Same shape/location as
  *  TREND_METRIC_SOURCE above, which already established this "small
  *  explicit map lives next to the query it adjusts" pattern in this exact
- *  file. */
-const METRIC_PERIOD_TYPE: Record<string, "ANNUAL" | "QUARTER"> = {
+ *  file.
+ *
+ *  Milestone 15B Part 1 extends this same map with the 5 VALUATION metrics
+ *  ingestValuationData.ts stores under period_type='TTM' (pe, ev_ebitda,
+ *  ev_sales, price_to_fcf, fcf_yield — forward_pe is unaffected, it was
+ *  already correctly stored ANNUAL). Confirmed live (15A audit, then
+ *  reconfirmed by a full live period_type audit of every active rule's
+ *  source metric, Milestone 15B) that these 5 were the ONLY mismatches
+ *  across all 37 active rules — every other metric's stored period_type
+ *  already matched what this repo queries.
+ *
+ *  This fix belongs HERE, not as a new score_rules.period_type column, for
+ *  two reasons: (1) no DDL execution capability exists in this environment
+ *  (every schema change in this project has had to be applied manually by
+ *  the user), so a schema change is real added friction for what is really
+ *  a fact about how ONE ingestion file (ingestValuationData.ts) happens to
+ *  store its rows; and (2) this exact file already established, with
+ *  TREND_METRIC_SOURCE and this map's own QUARTER entries, that "which
+ *  period_type/source metric a rule's data actually lives under" is
+ *  treated as a small explicit code-level lookup collocated with the query
+ *  it adjusts, not DB-level score_rules configuration — score_rules stays
+ *  about the SCORING model (weights, direction, rule type), never about
+ *  storage-layer wiring facts. Consistent with precedent beats a schema
+ *  change for a 5-line fix. */
+const METRIC_PERIOD_TYPE: Record<string, "ANNUAL" | "QUARTER" | "TTM"> = {
   eps_surprise_percent: "QUARTER",
   revenue_surprise_percent: "QUARTER",
+  pe: "TTM",
+  ev_ebitda: "TTM",
+  ev_sales: "TTM",
+  price_to_fcf: "TTM",
+  fcf_yield: "TTM",
 };
 
 export function buildSupabaseScoringRepo(): ScoringRepo {
