@@ -133,6 +133,60 @@ describe("scoring engine — reproducibility", () => {
   });
 });
 
+describe("scoring engine — a single historical data point never fabricates a trend score (Milestone 14E Part 0a)", () => {
+  it("a TREND rule with exactly ONE historical value is unavailable (0 coverage/confidence/score), never a fabricated trend score", async () => {
+    // Deliberately distinct from the "missing metric" test above: here the
+    // OUTER gate in scoreCategory.ts (dataPoints >= minimumDataPoints AND
+    // latestValue !== null) passes — there IS one real value — but
+    // trend() (calculations/metrics.ts) requires >=2 non-null points to
+    // compute a slope at all, so the TREND-specific inner check must still
+    // reject it. This proves that distinction, not just "no data at all".
+    const category = makeCategory("EARNINGS_MOMENTUM", 1.0);
+    const trendRule: ScoreRule = {
+      id: "EARNINGS_MOMENTUM-eps_surprise_percent",
+      categoryId: category.id,
+      metricName: "eps_surprise_percent",
+      ruleType: "TREND",
+      weight: 1.0,
+      direction: "HIGHER_IS_BETTER",
+      minimumDataPoints: 1,
+      sectorSpecific: false,
+      version: SCORING_VERSION,
+      active: true,
+    };
+    const repo: ScoringRepo = {
+      async getActiveCategories() {
+        return [category];
+      },
+      async getActiveRules() {
+        return [trendRule];
+      },
+      async getMetricInputs(_companyId, metricNames) {
+        const map = new Map<string, MetricInput>();
+        for (const name of metricNames) {
+          map.set(name, { metricName: name, latestValue: 12.5, history: [12.5] }); // exactly one point
+        }
+        return map;
+      },
+      async getBenchmarks() {
+        return new Map(); // TREND rules never consult benchmarks anyway
+      },
+      async getCompanySector() {
+        return "Technology";
+      },
+      async getPreviousFundamentalScore() {
+        return null;
+      },
+      async storeFundamentalScore() {},
+    };
+
+    const result = await calculateFundamentalScore("company-1", repo);
+    expect(result.dataCoverage).toBe(0);
+    expect(result.confidence).toBe(0);
+    expect(result.score).toBe(0);
+  });
+});
+
 describe("scoring engine — score_change vs previous snapshot", () => {
   it("computes score_change against the previous stored score", async () => {
     const { repo } = buildFakeRepo({
