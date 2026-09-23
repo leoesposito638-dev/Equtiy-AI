@@ -360,3 +360,88 @@ describe("FmpMarketDataAdapter.getHistoricalPrices — Milestone 14D, dividend-a
     expect(result.data).toBeNull();
   });
 });
+
+describe("FmpMarketDataAdapter.getHistoricalPrices — Milestone 14D.1, unsettled trading day is never stored", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("reproduces the exact 14D bug: a row for 'today' returned mid-session (09:40 ET) is rejected, not stored as a partial close", async () => {
+    // 2026-09-23 is EDT (UTC-4): 09:40 ET = 13:40 UTC — the exact live
+    // timestamp the Milestone 14D run actually happened at.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-23T13:40:00Z"));
+
+    mockRoutedFetch({
+      "/historical-price-eod/dividend-adjusted": {
+        status: 200,
+        body: [
+          { symbol: "NVDA", date: "2026-09-22", adjOpen: 215, adjHigh: 217, adjLow: 214, adjClose: 216, volume: 90000000 },
+          { symbol: "NVDA", date: "2026-09-23", adjOpen: 216.5, adjHigh: 218, adjLow: 215.9, adjClose: 217.4, volume: 12000000 }, // mid-session snapshot for "today"
+        ],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getHistoricalPrices({ ticker: "NVDA" }, "2026-09-20", "2026-09-23");
+
+    expect(result.status).toBe("available");
+    expect(result.data).toHaveLength(1);
+    expect(result.data?.[0]?.date).toBe("2026-09-22");
+    expect(result.data?.some((p) => p.date === "2026-09-23")).toBe(false);
+  });
+
+  it("boundary: a row dated exactly at close + settlement buffer IS accepted", async () => {
+    // 2026-09-23 close (16:00 ET / 20:00 UTC in EDT) + 30min buffer = 20:30 UTC.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-23T20:30:00Z"));
+
+    mockRoutedFetch({
+      "/historical-price-eod/dividend-adjusted": {
+        status: 200,
+        body: [{ symbol: "NVDA", date: "2026-09-23", adjOpen: 216.5, adjHigh: 218, adjLow: 215.9, adjClose: 217.4, volume: 95000000 }],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getHistoricalPrices({ ticker: "NVDA" }, "2026-09-23", "2026-09-23");
+
+    expect(result.status).toBe("available");
+    expect(result.data).toHaveLength(1);
+    expect(result.data?.[0]?.date).toBe("2026-09-23");
+  });
+
+  it("boundary: one millisecond before close + settlement buffer is rejected", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(new Date("2026-09-23T20:30:00Z").getTime() - 1));
+
+    mockRoutedFetch({
+      "/historical-price-eod/dividend-adjusted": {
+        status: 200,
+        body: [{ symbol: "NVDA", date: "2026-09-23", adjOpen: 216.5, adjHigh: 218, adjLow: 215.9, adjClose: 217.4, volume: 95000000 }],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getHistoricalPrices({ ticker: "NVDA" }, "2026-09-23", "2026-09-23");
+
+    expect(result.status).toBe("unavailable");
+    expect(result.data).toBeNull();
+  });
+
+  it("an unsettled row is a skip, not an error — other settled rows in the same response are still returned", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-23T13:40:00Z"));
+
+    mockRoutedFetch({
+      "/historical-price-eod/dividend-adjusted": {
+        status: 200,
+        body: [
+          { symbol: "NVDA", date: "2026-09-21", adjOpen: 213, adjHigh: 215, adjLow: 212, adjClose: 214, volume: 88000000 },
+          { symbol: "NVDA", date: "2026-09-22", adjOpen: 215, adjHigh: 217, adjLow: 214, adjClose: 216, volume: 90000000 },
+          { symbol: "NVDA", date: "2026-09-23", adjOpen: 216.5, adjHigh: 218, adjLow: 215.9, adjClose: 217.4, volume: 12000000 },
+        ],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getHistoricalPrices({ ticker: "NVDA" }, "2026-09-20", "2026-09-23");
+
+    expect(result.status).toBe("available");
+    expect(result.data?.map((p) => p.date)).toEqual(["2026-09-21", "2026-09-22"]);
+  });
+});

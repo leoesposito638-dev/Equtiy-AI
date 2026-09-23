@@ -58,6 +58,7 @@ import type {
   Quote,
   ValuationRatios,
 } from "../interfaces";
+import { isTradingDaySettled } from "../../calculations/marketSession";
 
 const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
 
@@ -260,6 +261,16 @@ export class FmpMarketDataAdapter implements MarketDataProvider {
       // rather than persist, never fabricate a floor/substitute value.
       if (adjOpen! <= 0 || adjHigh! <= 0 || adjLow! <= 0 || adjClose! <= 0) {
         skipReasons.push(`row for ${ref.ticker} on ${date} has a non-positive OHLC value — rejected.`);
+        continue;
+      }
+      // Milestone 14D.1: FMP returns a row for "today" even mid-session,
+      // containing an in-progress intraday snapshot, not a final daily bar
+      // — confirmed live (the 14D run happened ~09:40 ET and stored a
+      // partial close for that date). Never trust a row as a settled daily
+      // fact until its market session has actually closed, plus a
+      // settlement buffer — see calculations/marketSession.ts.
+      if (!isTradingDaySettled(date!)) {
+        skipReasons.push(`row for ${ref.ticker} on ${date} is not yet settled (US market session not closed + buffer) — rejected, never stored as a partial/intraday value.`);
         continue;
       }
 

@@ -52,7 +52,22 @@ function buildFakeRepo(opts: {
     async getMetricInputs(_companyId, metricNames) {
       const map = new Map<string, MetricInput>();
       for (const name of metricNames) {
-        map.set(name, { metricName: name, latestValue: opts.metricValue, history: [opts.metricValue] });
+        // Milestone 14D.1 root-cause fix: a single-point history defeats
+        // scoreCategory.ts's documented no-benchmark fallback (trend-only
+        // scoring, via calculations/metrics.ts's trend()), which needs >=2
+        // points to compute a slope at all. With only one point, the
+        // "no benchmark" case had NO path to a score — not because the
+        // rule was genuinely uncovered, but because this fixture handed it
+        // less data than the code path it was exercising actually needs.
+        // Three ascending periods (still a single realistic trend line
+        // ending at metricValue) give the trend fallback enough data to
+        // succeed, which is what lets "same coverage, lower confidence"
+        // — the property this test is actually named for — hold true.
+        // The benchmark path (scoreAgainstBenchmark) only ever reads
+        // latestValue, never history, so this is invisible to every other
+        // test in this file that sets hasBenchmark: true.
+        const history = opts.metricValue === null ? [null] : [opts.metricValue - 4, opts.metricValue - 2, opts.metricValue];
+        map.set(name, { metricName: name, latestValue: opts.metricValue, history });
       }
       return map;
     },
