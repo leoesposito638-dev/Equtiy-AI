@@ -22,6 +22,7 @@
 // ============================================================================
 
 import { getDbClient } from "../db/client";
+import { fetchAllPaginated } from "../db/paginate";
 import {
   selectLatestPerCompanyAsOf,
   computeBenchmarkTiers,
@@ -51,15 +52,21 @@ async function fetchScopedObservations(
   sectorByCompany: Map<string, string | undefined>
 ): Promise<CompanyMetricObservationWithSector[]> {
   const db = getDbClient();
-  const { data, error } = await db
-    .from("calculated_metrics")
-    .select("company_id, period_end, value")
-    .eq("metric_name", metricName)
-    .eq("period_type", periodType)
-    .eq("calculation_version", calculationVersion)
-    .in("company_id", companyIds); // <-- the scoping the existing general-purpose function lacks
-  if (error) throw new Error(`calculated_metrics query failed for ${metricName}: ${error.message}`);
-  return (data ?? [])
+  // Milestone 14D.1: paginated — a fan-out across many companies for one
+  // metric is exactly the risk shape this bug takes, and calculated_metrics
+  // already exceeds 1000 rows total live.
+  const rows = await fetchAllPaginated<any>((from, to) =>
+    db
+      .from("calculated_metrics")
+      .select("company_id, period_end, value")
+      .eq("metric_name", metricName)
+      .eq("period_type", periodType)
+      .eq("calculation_version", calculationVersion)
+      .in("company_id", companyIds) // <-- the scoping the existing general-purpose function lacks
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
+  return rows
     .filter((r: any) => r.value !== null)
     .map((r: any) => ({ companyId: r.company_id, periodEnd: r.period_end, value: r.value as number, sector: sectorByCompany.get(r.company_id) }));
 }

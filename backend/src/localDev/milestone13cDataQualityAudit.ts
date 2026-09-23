@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { getDbClient } from "../db/client";
+import { fetchAllPaginated } from "../db/paginate";
 
 const DEMO_TICKERS = [
   "NVDA", "TXN", "IBM", "ORCL", "QCOM", "ADBE", "INTC", "GOOGL", "DIS", "VZ",
@@ -19,36 +20,46 @@ async function main() {
   const idToTicker = new Map((companies as any[]).map((c) => [c.id, c.ticker]));
 
   console.log(`${"=".repeat(90)}\n1. LEGACY COMPANY LEAK CHECK\n${"=".repeat(90)}`);
-  const { data: allCatScores } = await db.from("category_scores").select("company_id");
-  const nonDemo = (allCatScores as any[]).filter((r) => !companyIds.includes(r.company_id));
+  // Milestone 14D.1: paginated — a table-wide select with no filter at all
+  // is the highest-risk shape of this bug.
+  const allCatScores = await fetchAllPaginated<any>((from, to) =>
+    db.from("category_scores").select("company_id").order("id", { ascending: true }).range(from, to)
+  );
+  const nonDemo = allCatScores.filter((r) => !companyIds.includes(r.company_id));
   console.log(`category_scores rows for companies OUTSIDE the 30-company universe: ${nonDemo.length} ${nonDemo.length === 0 ? "✅" : "❌"}`);
 
   console.log(`\n${"=".repeat(90)}\n2. DUPLICATE CATEGORY_SCORES CHECK (scoped per calculation_version)\n${"=".repeat(90)}`);
-  const { data: demoScores } = await db.from("category_scores").select("company_id, category_id, calculation_version").in("company_id", companyIds);
+  const demoScores = await fetchAllPaginated<any>((from, to) =>
+    db.from("category_scores").select("company_id, category_id, calculation_version").in("company_id", companyIds).order("id", { ascending: true }).range(from, to)
+  );
   const catDupMap = new Map<string, number>();
-  for (const r of demoScores as any[]) {
+  for (const r of demoScores) {
     const key = `${r.company_id}|${r.category_id}|${r.calculation_version}`;
     catDupMap.set(key, (catDupMap.get(key) ?? 0) + 1);
   }
   const catDupes = [...catDupMap.entries()].filter(([, n]) => n > 1);
   console.log(`Duplicate (company, category, version) triples: ${catDupes.length} ${catDupes.length === 0 ? "✅" : "❌"}`);
-  console.log(`Total category_scores for demo universe: ${(demoScores as any[]).length} (expect v1.0 history + v1.1 current)`);
+  console.log(`Total category_scores for demo universe: ${demoScores.length} (expect v1.0 history + v1.1 current)`);
 
   console.log(`\n${"=".repeat(90)}\n3. DUPLICATE FUNDAMENTAL_SCORES CHECK (scoped per calculation_version)\n${"=".repeat(90)}`);
-  const { data: fundRows } = await db.from("fundamental_scores").select("company_id, calculation_version").in("company_id", companyIds);
+  const fundRows = await fetchAllPaginated<any>((from, to) =>
+    db.from("fundamental_scores").select("company_id, calculation_version").in("company_id", companyIds).order("id", { ascending: true }).range(from, to)
+  );
   const fundDupMap = new Map<string, number>();
-  for (const r of fundRows as any[]) {
+  for (const r of fundRows) {
     const key = `${r.company_id}|${r.calculation_version}`;
     fundDupMap.set(key, (fundDupMap.get(key) ?? 0) + 1);
   }
   const fundDupes = [...fundDupMap.entries()].filter(([, n]) => n > 1);
   console.log(`Duplicate (company, version) pairs: ${fundDupes.length} ${fundDupes.length === 0 ? "✅" : "❌"}`);
-  console.log(`Total fundamental_scores for demo universe: ${(fundRows as any[]).length} (expect 30 v1.0 + 30 v1.1 = 60)`);
+  console.log(`Total fundamental_scores for demo universe: ${fundRows.length} (expect 30 v1.0 + 30 v1.1 = 60)`);
 
   console.log(`\n${"=".repeat(90)}\n4. SCORE / CONFIDENCE / COVERAGE RANGE CHECK\n${"=".repeat(90)}`);
-  const { data: allScoresFull } = await db.from("category_scores").select("*, score_categories(category_key)").in("company_id", companyIds);
-  const badScore = (allScoresFull as any[]).filter((r) => r.score < 0 || r.score > 100 || r.score === null);
-  const badConf = (allScoresFull as any[]).filter((r) => r.confidence < 0 || r.confidence > 1 || r.confidence === null);
+  const allScoresFull = await fetchAllPaginated<any>((from, to) =>
+    db.from("category_scores").select("*, score_categories(category_key)").in("company_id", companyIds).order("id", { ascending: true }).range(from, to)
+  );
+  const badScore = allScoresFull.filter((r) => r.score < 0 || r.score > 100 || r.score === null);
+  const badConf = allScoresFull.filter((r) => r.confidence < 0 || r.confidence > 1 || r.confidence === null);
   console.log(`Rows with score out of [0,100]: ${badScore.length} ${badScore.length === 0 ? "✅" : "❌"}`);
   console.log(`Rows with confidence out of [0,1]: ${badConf.length} ${badConf.length === 0 ? "✅" : "❌"}`);
 

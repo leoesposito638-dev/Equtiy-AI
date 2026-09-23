@@ -11,6 +11,7 @@
 import { fetchAndComputeBenchmarkSnapshot } from "../scoring/supabaseBenchmarkRepo";
 import { SECTOR_MIN_SAMPLE_SIZE, MARKET_WIDE_MIN_SAMPLE_SIZE } from "../scoring/benchmarkCalculation";
 import { getDbClient } from "../db/client";
+import { fetchAllPaginated } from "../db/paginate";
 
 const GROWTH_METRICS = ["revenue_growth_yoy", "revenue_cagr_3y", "eps_growth_yoy", "eps_cagr", "growth_acceleration"];
 const CALCULATION_VERSION = "v1.0";
@@ -64,16 +65,23 @@ async function main() {
   // Real, explicit list of exact companies+values contributing to each metric's MARKET_WIDE pool.
   console.log(`\n${"=".repeat(90)}\nEXACT CONTRIBUTING COMPANIES + VALUES\n${"=".repeat(90)}`);
   for (const metricName of GROWTH_METRICS) {
-    const { data: rows } = await db
-      .from("calculated_metrics")
-      .select("company_id, period_end, value")
-      .eq("metric_name", metricName)
-      .eq("period_type", "ANNUAL")
-      .eq("calculation_version", CALCULATION_VERSION)
-      .in("company_id", demoCompanies!.map((c: any) => c.id));
-    console.log(`\n${metricName}: ${rows?.length ?? 0} rows (may include historical backfill periods, deduped to latest-per-company by the real logic above)`);
+    // Milestone 14D.1: paginated — mirrors supabaseBenchmarkRepo.ts's own
+    // fix; a fan-out across many companies for one metric is exactly the
+    // risk shape this bug takes.
+    const rows = await fetchAllPaginated<any>((from, to) =>
+      db
+        .from("calculated_metrics")
+        .select("company_id, period_end, value")
+        .eq("metric_name", metricName)
+        .eq("period_type", "ANNUAL")
+        .eq("calculation_version", CALCULATION_VERSION)
+        .in("company_id", demoCompanies!.map((c: any) => c.id))
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
+    console.log(`\n${metricName}: ${rows.length} rows (may include historical backfill periods, deduped to latest-per-company by the real logic above)`);
     const latestByCompany = new Map<string, { periodEnd: string; value: number }>();
-    for (const r of (rows ?? []) as any[]) {
+    for (const r of rows) {
       const existing = latestByCompany.get(r.company_id);
       if (!existing || r.period_end > existing.periodEnd) latestByCompany.set(r.company_id, { periodEnd: r.period_end, value: r.value });
     }

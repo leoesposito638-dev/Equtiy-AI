@@ -6,6 +6,7 @@
 // ============================================================================
 
 import { getDbClient } from "../db/client";
+import { fetchAllPaginated } from "../db/paginate";
 
 const DEMO_TICKERS = [
   "NVDA", "TXN", "IBM", "ORCL", "QCOM", "ADBE", "INTC", "GOOGL", "DIS", "VZ",
@@ -21,14 +22,20 @@ async function main() {
   const idToTicker = new Map((companies as any[]).map((c) => [c.id, c.ticker]));
 
   console.log(`${"=".repeat(90)}\n1. LEGACY COMPANY LEAK CHECK\n${"=".repeat(90)}`);
-  const { data: allCatScores } = await db.from("category_scores").select("company_id, score_categories(category_key)");
-  const nonDemoScored = (allCatScores as any[]).filter((r) => !companyIds.includes(r.company_id));
+  // Milestone 14D.1: paginated — a table-wide select with no filter at all
+  // is the highest-risk shape of this bug.
+  const allCatScores = await fetchAllPaginated<any>((from, to) =>
+    db.from("category_scores").select("company_id, score_categories(category_key)").order("id", { ascending: true }).range(from, to)
+  );
+  const nonDemoScored = allCatScores.filter((r) => !companyIds.includes(r.company_id));
   console.log(`category_scores rows for companies OUTSIDE the 30-company universe: ${nonDemoScored.length} ${nonDemoScored.length === 0 ? "✅" : "❌"}`);
 
   console.log(`\n${"=".repeat(90)}\n2. DUPLICATE CATEGORY_SCORES CHECK\n${"=".repeat(90)}`);
-  const { data: demoScores } = await db.from("category_scores").select("company_id, category_id").in("company_id", companyIds);
+  const demoScores = await fetchAllPaginated<any>((from, to) =>
+    db.from("category_scores").select("company_id, category_id").in("company_id", companyIds).order("id", { ascending: true }).range(from, to)
+  );
   const catDupMap = new Map<string, number>();
-  for (const r of demoScores as any[]) {
+  for (const r of demoScores) {
     const key = `${r.company_id}|${r.category_id}`;
     catDupMap.set(key, (catDupMap.get(key) ?? 0) + 1);
   }
@@ -36,8 +43,10 @@ async function main() {
   console.log(`Duplicate (company, category) category_scores pairs: ${catDupes.length} ${catDupes.length === 0 ? "✅" : "❌"}`);
 
   console.log(`\n${"=".repeat(90)}\n3. SCORE / CONFIDENCE / COVERAGE RANGE CHECK\n${"=".repeat(90)}`);
-  const { data: allScoresFull } = await db.from("category_scores").select("*, score_categories(category_key)").in("company_id", companyIds);
-  const badScore = (allScoresFull as any[]).filter((r) => r.score < 0 || r.score > 100 || r.score === null);
+  const allScoresFull = await fetchAllPaginated<any>((from, to) =>
+    db.from("category_scores").select("*, score_categories(category_key)").in("company_id", companyIds).order("id", { ascending: true }).range(from, to)
+  );
+  const badScore = allScoresFull.filter((r) => r.score < 0 || r.score > 100 || r.score === null);
   const badConf = (allScoresFull as any[]).filter((r) => r.confidence < 0 || r.confidence > 1 || r.confidence === null);
   const badCov = (allScoresFull as any[]).filter((r) => r.coverage < 0 || r.coverage > 1 || r.coverage === null);
   console.log(`Rows with score out of [0,100]: ${badScore.length} ${badScore.length === 0 ? "✅" : "❌"}`);
@@ -49,9 +58,18 @@ async function main() {
   console.log(`Rows with score=0 AND confidence=0: ${zeroScores.length} ${zeroScores.length === 0 ? "✅" : "❌"}`);
 
   console.log(`\n${"=".repeat(90)}\n5. DUPLICATE CALCULATED_METRICS CHECK\n${"=".repeat(90)}`);
-  const { data: cmRows } = await db.from("calculated_metrics").select("company_id, metric_name, period_end, period_type, calculation_version").in("company_id", companyIds);
+  // Milestone 14D.1: paginated — calculated_metrics already exceeds 1000
+  // rows total live, so this 30-company fan-out was silently truncating.
+  const cmRows = await fetchAllPaginated<any>((from, to) =>
+    db
+      .from("calculated_metrics")
+      .select("company_id, metric_name, period_end, period_type, calculation_version")
+      .in("company_id", companyIds)
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
   const cmDupMap = new Map<string, number>();
-  for (const r of cmRows as any[]) {
+  for (const r of cmRows) {
     const key = `${r.company_id}|${r.metric_name}|${r.period_end}|${r.period_type}|${r.calculation_version}`;
     cmDupMap.set(key, (cmDupMap.get(key) ?? 0) + 1);
   }
@@ -60,11 +78,20 @@ async function main() {
   console.log(`Total calculated_metrics rows for demo universe: ${(cmRows as any[]).length}`);
 
   console.log(`\n${"=".repeat(90)}\n6. MIXED-PROVIDER CANONICAL CHECK\n${"=".repeat(90)}`);
-  const { data: fmRows } = await db.from("financial_metrics").select("company_id, metric_name, source_id").in("company_id", companyIds);
+  // Milestone 14D.1: paginated — financial_metrics already exceeds 1000
+  // rows total live, so this 30-company fan-out was silently truncating.
+  const fmRows = await fetchAllPaginated<any>((from, to) =>
+    db
+      .from("financial_metrics")
+      .select("company_id, metric_name, source_id")
+      .in("company_id", companyIds)
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
   const { data: sources } = await db.from("data_sources").select("id, provider_name");
   const providerById = new Map((sources as any[]).map((s) => [s.id, s.provider_name]));
   const byCompanyMetric = new Map<string, Set<string>>();
-  for (const r of fmRows as any[]) {
+  for (const r of fmRows) {
     const key = `${r.company_id}|${r.metric_name}`;
     const providers = byCompanyMetric.get(key) ?? new Set<string>();
     providers.add(providerById.get(r.source_id) ?? "UNKNOWN");

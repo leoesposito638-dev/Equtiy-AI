@@ -3,6 +3,7 @@
 // 30-company demo universe. No writes.
 // ============================================================================
 import { getDbClient } from "../db/client";
+import { fetchAllPaginated } from "../db/paginate";
 
 const TICKERS = [
   "NVDA", "TXN", "IBM", "ORCL", "QCOM", "ADBE", "INTC", "GOOGL", "DIS", "VZ",
@@ -37,11 +38,17 @@ async function main() {
   const companyIds = companies!.map((c: any) => c.id);
   const idToTicker = new Map(companies!.map((c: any) => [c.id, c.ticker]));
 
-  const { data: rawRows, error: rawErr } = await db
-    .from("raw_financial_data")
-    .select("id, company_id, metric_name, period_start, period_end, period_type, data_source_id, data_sources(provider_name)")
-    .in("company_id", companyIds);
-  if (rawErr) throw new Error(rawErr.message);
+  // Milestone 14D.1: paginated — raw_financial_data already exceeds 1000
+  // rows for the 30-company universe live (~2300), so this unbounded
+  // .in(company_id, 30 ids) fan-out was silently truncating on any rerun.
+  const rawRows = await fetchAllPaginated<any>((from, to) =>
+    db
+      .from("raw_financial_data")
+      .select("id, company_id, metric_name, period_start, period_end, period_type, data_source_id, data_sources(provider_name)")
+      .in("company_id", companyIds)
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
 
   console.log(`\n2-3-4-5. Revenue/net_income/eps period checks:`);
   let anomalies = 0;
@@ -73,25 +80,35 @@ async function main() {
   console.log(`7. Raw rows with missing/invalid data_sources link: ${orphaned.length} ${orphaned.length === 0 ? "✅" : "❌"}`);
 
   // 8. canonical financial_metrics present
-  const { data: fmRows, error: fmErr } = await db
-    .from("financial_metrics")
-    .select("company_id, metric_name, period_end")
-    .in("company_id", companyIds);
-  if (fmErr) throw new Error(fmErr.message);
-  console.log(`\n8. Canonical financial_metrics rows across all 30: ${fmRows!.length}`);
+  // Milestone 14D.1: paginated — financial_metrics also already exceeds
+  // 1000 rows for the 30-company universe live (~2270).
+  const fmRows = await fetchAllPaginated<any>((from, to) =>
+    db
+      .from("financial_metrics")
+      .select("company_id, metric_name, period_end")
+      .in("company_id", companyIds)
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
+  console.log(`\n8. Canonical financial_metrics rows across all 30: ${fmRows.length}`);
   for (const ticker of TICKERS) {
     const company = companies!.find((c: any) => c.ticker === ticker) as any;
-    const count = fmRows!.filter((r: any) => r.company_id === company.id).length;
+    const count = fmRows.filter((r: any) => r.company_id === company.id).length;
     if (count < 12) console.log(`   ⚠️  ${ticker}: only ${count} canonical rows (expected >= 12)`);
   }
 
   // 9. calculated_metrics
-  const { data: cmRows, error: cmErr } = await db
-    .from("calculated_metrics")
-    .select("company_id, metric_name")
-    .in("company_id", companyIds);
-  if (cmErr) throw new Error(cmErr.message);
-  console.log(`\n9. calculated_metrics rows across all 30: ${cmRows!.length}`);
+  // Milestone 14D.1: paginated — calculated_metrics also already exceeds
+  // 1000 rows for the 30-company universe live (~1670).
+  const cmRows = await fetchAllPaginated<any>((from, to) =>
+    db
+      .from("calculated_metrics")
+      .select("company_id, metric_name")
+      .in("company_id", companyIds)
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
+  console.log(`\n9. calculated_metrics rows across all 30: ${cmRows.length}`);
 
   console.log(`\n${"=".repeat(70)}\nFINAL AGGREGATE COUNTS\n${"=".repeat(70)}`);
   console.log(`companies (all)          = ${await countAll("companies")}`);
