@@ -39,7 +39,13 @@ import type { MetricInput } from "./categoryScorers/types";
 // 1-2 (the TTM/ANNUAL period_type fix and the debt-metric recalculation)
 // without overwriting v1.1's stored fundamental_scores/category_scores —
 // those stay exactly as calculated, reproducible under 'v1.1' forever.
-export const SCORING_VERSION = "v1.2";
+//
+// Milestone 15C Part 3: bumped to v1.3, same reasoning, same byte-identical
+// rule config (schema/011_scoring_config_v1_3.sql) — captures this
+// milestone's real DATA changes (FMP-sourced debt metrics under their own
+// isolated metric_names) under its own calculation_version, never touching
+// v1.1's or v1.2's stored rows.
+export const SCORING_VERSION = "v1.3";
 
 export interface ScoringRepo {
   getActiveCategories(): Promise<ScoreCategory[]>;
