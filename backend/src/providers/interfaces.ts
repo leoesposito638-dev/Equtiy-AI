@@ -116,6 +116,33 @@ export interface LivePrice {
   timestamp: string;
 }
 
+/** Milestone 14D. Only one value exists today — the codebase reads exactly
+ *  one FMP endpoint variant (dividend-adjusted) and never any other. Kept
+ *  as its own type (not a bare string) so a future second source/variant
+ *  is a real, reviewed addition here, never an implicit reinterpretation
+ *  of what's already stored. See daily_prices.adjustment_type. */
+export type PriceAdjustmentType = "split_and_dividend_adjusted";
+
+/** Milestone 14D — one trading day's OHLCV, explicitly adjusted (see
+ *  PriceAdjustmentType). Replaces getHistoricalPrices()'s old inline
+ *  `{date, close, volume}` shape: the Milestone 14C audit found that FMP's
+ *  plain-named `full` endpoint (open/high/low/close, no "adj" prefix) is
+ *  ALREADY split-adjusted but NOT dividend-adjusted, while a same-shaped
+ *  `non-split-adjusted` endpoint returns genuinely raw prices under
+ *  identically-named fields — a real, easy-to-miss correctness trap if the
+ *  adjustment basis is left implicit in a URL string instead of the type.
+ *  `adjustmentType` makes every consumer state, at compile time, which
+ *  basis it is reading. */
+export interface DailyPrice {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
+  adjustmentType: PriceAdjustmentType;
+}
+
 export interface NewsItem {
   title: string;
   description?: string;
@@ -141,11 +168,9 @@ export interface ProviderCompanyRef {
 
 export interface MarketDataProvider {
   getQuote(ref: ProviderCompanyRef): Promise<ProviderResult<Quote>>;
-  getHistoricalPrices(
-    ref: ProviderCompanyRef,
-    from: string,
-    to: string
-  ): Promise<ProviderResult<Array<{ date: string; close: number; volume: number }>>>;
+  /** Milestone 14D — see DailyPrice's own doc comment for why this is no
+   *  longer an inline `{date, close, volume}` shape. */
+  getHistoricalPrices(ref: ProviderCompanyRef, from: string, to: string): Promise<ProviderResult<DailyPrice[]>>;
   /** Milestone 13F. */
   getValuationRatios(ref: ProviderCompanyRef): Promise<ProviderResult<ValuationRatios>>;
   /** Milestone 13H — see LivePrice's doc comment for why this is not just

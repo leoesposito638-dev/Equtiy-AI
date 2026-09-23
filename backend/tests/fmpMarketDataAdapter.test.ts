@@ -240,10 +240,122 @@ describe("FmpMarketDataAdapter.getLivePrice — Milestone 13H, sourced from /sta
   });
 });
 
-describe("FmpMarketDataAdapter.getHistoricalPrices — out of scope this milestone", () => {
-  it("returns an honest unavailable, never a fabricated series", async () => {
+describe("FmpMarketDataAdapter.getHistoricalPrices — Milestone 14D, dividend-adjusted daily OHLCV", () => {
+  it("happy path: maps real-shaped dividend-adjusted rows to DailyPrice[]", async () => {
+    mockRoutedFetch({
+      "/historical-price-eod/dividend-adjusted": {
+        status: 200,
+        body: [
+          { symbol: "NVDA", date: "2026-09-18", adjOpen: 219.35, adjHigh: 222.73, adjLow: 218.03, adjClose: 222.27, volume: 190287429 },
+          { symbol: "NVDA", date: "2026-09-17", adjOpen: 218.38, adjHigh: 219.91, adjLow: 217.15, adjClose: 219.34, volume: 94191300 },
+        ],
+      },
+    });
     const adapter = new FmpMarketDataAdapter("test-key");
-    const result = await adapter.getHistoricalPrices({ ticker: "NVDA" }, "2026-01-01", "2026-06-01");
+    const result = await adapter.getHistoricalPrices({ ticker: "NVDA" }, "2026-09-15", "2026-09-20");
+
+    expect(result.status).toBe("available");
+    expect(result.data).toHaveLength(2);
+    expect(result.data?.[0]).toEqual({
+      date: "2026-09-18",
+      open: 219.35,
+      high: 222.73,
+      low: 218.03,
+      close: 222.27,
+      volume: 190287429,
+      adjustmentType: "split_and_dividend_adjusted",
+    });
+  });
+
+  it("calls the dividend-adjusted endpoint specifically, never full or non-split-adjusted", async () => {
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url.includes("/historical-price-eod/dividend-adjusted")) {
+        return { ok: true, status: 200, json: async () => [{ date: "2026-09-18", adjOpen: 1, adjHigh: 1, adjLow: 1, adjClose: 1, volume: 1 }], text: async () => "" };
+      }
+      return { ok: false, status: 404, json: async () => ({}), text: async () => "" };
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const adapter = new FmpMarketDataAdapter("test-key");
+    await adapter.getHistoricalPrices({ ticker: "NVDA" }, "2026-09-15", "2026-09-20");
+    const calledUrls = fetchSpy.mock.calls.map((c) => c[0] as string);
+    expect(calledUrls.some((u) => u.includes("/historical-price-eod/dividend-adjusted"))).toBe(true);
+    expect(calledUrls.some((u) => /\/historical-price-eod\/full/.test(u))).toBe(false);
+    expect(calledUrls.some((u) => /non-split-adjusted/.test(u))).toBe(false);
+  });
+
+  it("returns unavailable, not a fabricated series, on an empty response", async () => {
+    mockRoutedFetch({ "/historical-price-eod/dividend-adjusted": { status: 200, body: [] } });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getHistoricalPrices({ ticker: "NVDA" }, "2026-09-15", "2026-09-20");
+    expect(result.status).toBe("unavailable");
+    expect(result.data).toBeNull();
+  });
+
+  it("returns unavailable, not fabricated data, on HTTP 402 (subscription-gated symbol)", async () => {
+    mockRoutedFetch({ "/historical-price-eod/dividend-adjusted": { status: 402, body: { error: "Premium Query Parameter" } } });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getHistoricalPrices({ ticker: "TXN" }, "2026-09-15", "2026-09-20");
+    expect(result.status).toBe("unavailable");
+    expect(result.data).toBeNull();
+    expect(result.unavailableReason).toContain("402");
+  });
+
+  it("a row missing a required OHLC field is skipped, without blocking other valid rows", async () => {
+    mockRoutedFetch({
+      "/historical-price-eod/dividend-adjusted": {
+        status: 200,
+        body: [
+          { symbol: "NVDA", date: "2026-09-18", adjOpen: 219.35, adjHigh: 222.73, adjLow: 218.03, adjClose: 222.27, volume: 190287429 },
+          { symbol: "NVDA", date: "2026-09-17", adjOpen: 218.38, adjHigh: 219.91, volume: 94191300 }, // missing adjLow/adjClose
+        ],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getHistoricalPrices({ ticker: "NVDA" }, "2026-09-15", "2026-09-20");
+    expect(result.status).toBe("available");
+    expect(result.data).toHaveLength(1);
+    expect(result.data?.[0]?.date).toBe("2026-09-18");
+  });
+
+  it("a row with a zero or negative price is rejected, never persisted", async () => {
+    mockRoutedFetch({
+      "/historical-price-eod/dividend-adjusted": {
+        status: 200,
+        body: [
+          { symbol: "NVDA", date: "2026-09-18", adjOpen: 219.35, adjHigh: 222.73, adjLow: 218.03, adjClose: 222.27, volume: 190287429 },
+          { symbol: "NVDA", date: "2026-09-17", adjOpen: 0, adjHigh: 219.91, adjLow: 217.15, adjClose: 219.34, volume: 94191300 }, // zero open
+          { symbol: "NVDA", date: "2026-09-16", adjOpen: 214.14, adjHigh: 216.76, adjLow: 212.5, adjClose: -213.9, volume: 96563600 }, // negative close
+        ],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getHistoricalPrices({ ticker: "NVDA" }, "2026-09-15", "2026-09-20");
+    expect(result.status).toBe("available");
+    expect(result.data).toHaveLength(1);
+    expect(result.data?.[0]?.date).toBe("2026-09-18");
+  });
+
+  it("never includes the API key in the returned source URL", async () => {
+    mockRoutedFetch({
+      "/historical-price-eod/dividend-adjusted": {
+        status: 200,
+        body: [{ date: "2026-09-18", adjOpen: 1, adjHigh: 1, adjLow: 1, adjClose: 1, volume: 1 }],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("super-secret-key");
+    const result = await adapter.getHistoricalPrices({ ticker: "NVDA" }, "2026-09-15", "2026-09-20");
+    expect(result.source?.sourceUrl).not.toContain("super-secret-key");
+  });
+
+  it("all-invalid response (every row rejected) returns unavailable, not an empty-but-available array", async () => {
+    mockRoutedFetch({
+      "/historical-price-eod/dividend-adjusted": {
+        status: 200,
+        body: [{ date: "2026-09-18", adjOpen: 0, adjHigh: 0, adjLow: 0, adjClose: 0, volume: 1 }],
+      },
+    });
+    const adapter = new FmpMarketDataAdapter("test-key");
+    const result = await adapter.getHistoricalPrices({ ticker: "NVDA" }, "2026-09-15", "2026-09-20");
     expect(result.status).toBe("unavailable");
     expect(result.data).toBeNull();
   });

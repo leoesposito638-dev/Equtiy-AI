@@ -1,5 +1,5 @@
 // ============================================================================
-// Equity AI — FMP Market Data Adapter (Milestone 13F)
+// Equity AI — FMP Market Data Adapter (Milestone 13F, extended 14D)
 //
 // Implements MarketDataProvider against FMP's real REST API. This is the
 // ONLY file besides fmpAdapter.ts that talks to FMP or reads FMP_API_KEY —
@@ -16,13 +16,21 @@
 //     period alignment to anything. Enterprise Value is included in Quote
 //     for exactly this reason: it must never be reconstructed by combining
 //     this adapter's price/shares with a different provider's debt/cash.
-//   - getHistoricalPrices: NOT implemented — valuation needs a single
-//     period-end price, not a price history. Honest "unavailable", same
-//     pattern as every other not-yet-implemented method in this codebase.
 //   - getValuationRatios: sourced from /stable/ratios-ttm. Every field is
 //     copied verbatim from FMP's own already-divided ratio — never
 //     recomputed from separately-fetched pieces, so it can never mix a
 //     period or a provider by accident.
+//
+// getHistoricalPrices (Milestone 14D): implemented for real, sourced from
+// /stable/historical-price-eod/dividend-adjusted ONLY — never `full` (split-
+// adjusted only, confirmed live during the 14C audit against NVDA's real
+// 2024 10:1 split — its plainly-named open/high/low/close are NOT fully
+// adjusted despite the unqualified names) and never `non-split-adjusted`
+// (genuinely raw prices under the SAME `adj*` field names as
+// dividend-adjusted — a real, live-confirmed trap if the wrong variant is
+// read). Every returned DailyPrice carries adjustmentType explicitly so
+// this choice is a compile-time-visible fact, not an implicit consequence
+// of a URL string.
 //
 // KNOWN FEASIBILITY FINDING this adapter encodes (valuation audit,
 // verified live against all 30 demo tickers): the current FMP_API_KEY's
@@ -42,6 +50,7 @@
 // ============================================================================
 
 import type {
+  DailyPrice,
   LivePrice,
   MarketDataProvider,
   ProviderCompanyRef,
@@ -108,6 +117,22 @@ interface FmpQuoteRow {
   symbol?: string;
   price?: number;
   timestamp?: number; // unix seconds, verified live (e.g. 1789055787)
+}
+
+/** Shape of one element of FMP's GET /historical-price-eod/dividend-adjusted
+ *  response. Field names deliberately match FMP's `non-split-adjusted`
+ *  variant exactly (same `adj*` prefixes) — verified live, Milestone 14C —
+ *  which is why this adapter hardcodes the `dividend-adjusted` path rather
+ *  than taking it as a parameter: the two variants are not distinguishable
+ *  from the response shape alone, only from which URL was actually called. */
+interface FmpDividendAdjustedPriceRow {
+  symbol?: string;
+  date?: string; // "YYYY-MM-DD", no time component (verified live, 14C)
+  adjOpen?: number;
+  adjHigh?: number;
+  adjLow?: number;
+  adjClose?: number;
+  volume?: number;
 }
 
 async function fmpGet<T>(path: string, apiKey: string): Promise<{ ok: true; body: T; redactedUrl: string } | { ok: false; reason: string }> {
@@ -194,16 +219,81 @@ export class FmpMarketDataAdapter implements MarketDataProvider {
     };
   }
 
-  async getHistoricalPrices(
-    ref: ProviderCompanyRef,
-    _from: string,
-    _to: string
-  ): Promise<ProviderResult<Array<{ date: string; close: number; volume: number }>>> {
+  /** Milestone 14D. `from`/`to` are "YYYY-MM-DD" (matches FMP's own date
+   *  format exactly, no conversion needed). Sourced ONLY from
+   *  /historical-price-eod/dividend-adjusted — see this file's header and
+   *  DailyPrice's own doc comment (interfaces.ts) for why `full` and
+   *  `non-split-adjusted` are never read here. A row missing any OHLC
+   *  field, or with a non-positive open/high/low/close, is skipped rather
+   *  than persisted with a fabricated or invalid value — same "never
+   *  fabricate" rule as every other adapter in this codebase. */
+  async getHistoricalPrices(ref: ProviderCompanyRef, from: string, to: string): Promise<ProviderResult<DailyPrice[]>> {
+    const result = await fmpGet<FmpDividendAdjustedPriceRow[]>(
+      `/historical-price-eod/dividend-adjusted?symbol=${encodeURIComponent(ref.ticker)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      this.apiKey
+    );
+    if (!result.ok) {
+      return { status: "unavailable", data: null, source: null, unavailableReason: result.reason };
+    }
+
+    if (!Array.isArray(result.body) || result.body.length === 0) {
+      return {
+        status: "unavailable",
+        data: null,
+        source: null,
+        unavailableReason: `FMP returned no dividend-adjusted price rows for ${ref.ticker} in range [${from}, ${to}] at ${result.redactedUrl}.`,
+      };
+    }
+
+    const prices: DailyPrice[] = [];
+    const skipReasons: string[] = [];
+
+    for (const row of result.body) {
+      const { date, adjOpen, adjHigh, adjLow, adjClose } = row;
+      const missingField =
+        !date || typeof adjOpen !== "number" || typeof adjHigh !== "number" || typeof adjLow !== "number" || typeof adjClose !== "number";
+      if (missingField) {
+        skipReasons.push(`row for ${ref.ticker} is missing required OHLC field(s) (from ${result.redactedUrl}).`);
+        continue;
+      }
+      // A zero or negative price is never a real traded price — reject
+      // rather than persist, never fabricate a floor/substitute value.
+      if (adjOpen! <= 0 || adjHigh! <= 0 || adjLow! <= 0 || adjClose! <= 0) {
+        skipReasons.push(`row for ${ref.ticker} on ${date} has a non-positive OHLC value — rejected.`);
+        continue;
+      }
+
+      prices.push({
+        date: date!,
+        open: adjOpen!,
+        high: adjHigh!,
+        low: adjLow!,
+        close: adjClose!,
+        volume: typeof row.volume === "number" ? row.volume : null,
+        adjustmentType: "split_and_dividend_adjusted",
+      });
+    }
+
+    if (prices.length === 0) {
+      return {
+        status: "unavailable",
+        data: null,
+        source: null,
+        unavailableReason: skipReasons.join(" ") || `FMP returned no usable price rows for ${ref.ticker} at ${result.redactedUrl}.`,
+      };
+    }
+
     return {
-      status: "unavailable",
-      data: null,
-      source: null,
-      unavailableReason: `FmpMarketDataAdapter.getHistoricalPrices is not implemented for ${ref.ticker} — Milestone 13F only needs a single period-end quote for valuation, not a price history.`,
+      status: "available",
+      data: prices,
+      source: {
+        providerName: "Financial Modeling Prep",
+        providerType: "MARKET_DATA",
+        sourceUrl: result.redactedUrl,
+        reportingPeriodStart: from,
+        reportingPeriodEnd: to,
+        currency: "USD",
+      },
     };
   }
 
