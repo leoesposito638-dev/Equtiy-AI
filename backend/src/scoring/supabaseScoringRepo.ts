@@ -51,6 +51,10 @@ function toMetricBenchmark(row: DbMetricBenchmarkRow): MetricBenchmark {
  *  gets silently truncated as more history accumulates over time. */
 const MAX_HISTORY_PERIODS = 20;
 
+// Both maps below are exported (Milestone 15B) so localDev/coverageAudit.ts
+// can mirror this repo's exact query resolution instead of duplicating it —
+// a hand-copied duplicate would silently drift the moment either map
+// changes again.
 /** Milestone 12D: TREND rules that score the trend of an ALREADY-COMPUTED
  *  metric's own stored history, under a different score_rules metric_name.
  *  This mapping is not a new formula — it is exactly what
@@ -70,7 +74,7 @@ const MAX_HISTORY_PERIODS = 20;
  *  metric. Milestone 13C added debt_trend -> total_debt and
  *  net_debt_trend -> net_debt, the same pattern applied to the debt-derived
  *  metrics newly computed in fundamentalRatios.ts. */
-const TREND_METRIC_SOURCE: Record<string, string> = {
+export const TREND_METRIC_SOURCE: Record<string, string> = {
   margin_trend: "net_margin",
   gross_margin_stability: "gross_margin",
   roic_persistence: "roic",
@@ -116,7 +120,7 @@ const TREND_METRIC_SOURCE: Record<string, string> = {
  *  about the SCORING model (weights, direction, rule type), never about
  *  storage-layer wiring facts. Consistent with precedent beats a schema
  *  change for a 5-line fix. */
-const METRIC_PERIOD_TYPE: Record<string, "ANNUAL" | "QUARTER" | "TTM"> = {
+export const METRIC_PERIOD_TYPE: Record<string, "ANNUAL" | "QUARTER" | "TTM"> = {
   eps_surprise_percent: "QUARTER",
   revenue_surprise_percent: "QUARTER",
   pe: "TTM",

@@ -31,7 +31,15 @@ import type { MetricInput } from "./categoryScorers/types";
 // remain in the database, tagged calculation_version='v1.0', and stay
 // reproducible; this constant only controls which version NEW scoring runs
 // use (repo.getActiveRules(SCORING_VERSION) below).
-export const SCORING_VERSION = "v1.1";
+//
+// Milestone 15B Part 3: bumped to v1.2. The rule CONFIG is byte-identical
+// to v1.1 (schema/010_scoring_config_v1_2.sql) — no weight, direction, or
+// minimum_data_points changed. v1.2 exists purely to capture, under its own
+// calculation_version, the real DATA changes from this milestone's Parts
+// 1-2 (the TTM/ANNUAL period_type fix and the debt-metric recalculation)
+// without overwriting v1.1's stored fundamental_scores/category_scores —
+// those stay exactly as calculated, reproducible under 'v1.1' forever.
+export const SCORING_VERSION = "v1.2";
 
 export interface ScoringRepo {
   getActiveCategories(): Promise<ScoreCategory[]>;
