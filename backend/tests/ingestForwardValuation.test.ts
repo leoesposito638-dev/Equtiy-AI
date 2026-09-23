@@ -41,6 +41,8 @@ function makeFakeDb(seed: { financial_metrics?: Row[] } = {}) {
     let orderField: string | null = null;
     let orderAscending = true;
     let limitN: number | null = null;
+    let rangeFrom: number | null = null;
+    let rangeTo: number | null = null;
 
     const builder: any = {
       select(_cols: string) {
@@ -56,12 +58,24 @@ function makeFakeDb(seed: { financial_metrics?: Row[] } = {}) {
         return builder;
       },
       order(field: string, opts: { ascending: boolean }) {
+        // Milestone 14D.1: getExistingEstimateKeys now calls .order("id")
+        // as a secondary sort before .range() — only the LAST .order()
+        // call needs to actually drive sorting here for this fixture's
+        // rows (there's never a tie on the primary field in these tests),
+        // so simply overwriting is faithful to real chained-order semantics.
         orderField = field;
         orderAscending = opts.ascending;
         return builder;
       },
       limit(n: number) {
         limitN = n;
+        return builder;
+      },
+      range(from: number, to: number) {
+        // Milestone 14D.1: mirrors Supabase's real .range(from, to) —
+        // inclusive bounds, used by fetchAllPaginated (src/db/paginate.ts).
+        rangeFrom = from;
+        rangeTo = to;
         return builder;
       },
       insert(p: Row) {
@@ -97,6 +111,7 @@ function makeFakeDb(seed: { financial_metrics?: Row[] } = {}) {
           if (!orderAscending) rows.reverse();
         }
         if (limitN != null) rows = rows.slice(0, limitN);
+        if (rangeFrom != null && rangeTo != null) rows = rows.slice(rangeFrom, rangeTo + 1);
         return resolve({ data: rows, error: null });
       },
     };

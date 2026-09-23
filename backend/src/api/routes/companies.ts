@@ -19,6 +19,7 @@
 import { Router } from "express";
 import { getDbClient } from "../../db/client";
 import { DEMO_TICKERS } from "../../config/demoUniverse";
+import { fetchAllPaginated } from "../../db/paginate";
 
 const router = Router();
 
@@ -47,24 +48,46 @@ router.get("/:id", async (req, res) => {
 
 router.get("/:id/metrics", async (req, res) => {
   const db = getDbClient();
-  const { data, error } = await db
-    .from("calculated_metrics")
-    .select("metric_name, value, period_end, period_type, calculation_version")
-    .eq("company_id", req.params.id)
-    .order("period_end", { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ data });
+  try {
+    // Milestone 14D.1: calculated_metrics accumulates a row per metric per
+    // period per calculation_version, per company — this grows past 1000
+    // rows for a single company over enough history/rescoring versions, so
+    // an unpaginated .select() here would silently truncate. Paginated,
+    // never a single unbounded select.
+    const data = await fetchAllPaginated((from, to) =>
+      db
+        .from("calculated_metrics")
+        .select("metric_name, value, period_end, period_type, calculation_version")
+        .eq("company_id", req.params.id)
+        .order("period_end", { ascending: false })
+        .order("id", { ascending: true }) // tie-breaker: period_end alone isn't unique, and .range() needs a fully deterministic order to page correctly
+        .range(from, to)
+    );
+    res.json({ data });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
 });
 
 router.get("/:id/financials", async (req, res) => {
   const db = getDbClient();
-  const { data, error } = await db
-    .from("financial_metrics")
-    .select("metric_name, value, unit, currency, period_end, period_type, source_id")
-    .eq("company_id", req.params.id)
-    .order("period_end", { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ data });
+  try {
+    // Same reasoning as /:id/metrics above — financial_metrics is a
+    // per-company, per-period, per-metric series that can exceed 1000
+    // rows for one company as reporting history accumulates.
+    const data = await fetchAllPaginated((from, to) =>
+      db
+        .from("financial_metrics")
+        .select("metric_name, value, unit, currency, period_end, period_type, source_id")
+        .eq("company_id", req.params.id)
+        .order("period_end", { ascending: false })
+        .order("id", { ascending: true }) // tie-breaker: period_end alone isn't unique, and .range() needs a fully deterministic order to page correctly
+        .range(from, to)
+    );
+    res.json({ data });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
 });
 
 router.get("/:id/valuation", async (req, res) => {

@@ -21,6 +21,7 @@
 // ============================================================================
 
 import { getDbClient } from "../db/client";
+import { SUPABASE_MAX_PAGE_SIZE } from "../db/paginate";
 import type { MarketDataProvider, ProviderCompanyRef } from "../providers/interfaces";
 
 export interface DailyPriceIngestionOutcome {
@@ -95,12 +96,25 @@ export async function ingestDailyPrices(
       source_id: sourceId,
     }));
 
-    const { data: upserted, error } = await db
-      .from("daily_prices")
-      .upsert(rows, { onConflict: "company_id,trade_date,adjustment_type" })
-      .select("id");
-    if (error) throw new Error(`daily_prices upsert failed: ${error.message}`);
-    outcome.rowsUpserted = upserted?.length ?? rows.length;
+    // Milestone 14D.1: a single .upsert(rows).select("id") call returns at
+    // most 1000 rows (PostgREST's default cap applies to the RETURNING
+    // select too), so a single request whose input `rows` exceeds 1000 —
+    // which happens for one company once its requested date range covers
+    // more than ~4 years of trading days — would silently undercount
+    // rowsUpserted even though every row was in fact written. Chunking the
+    // upsert itself sidesteps this entirely: each chunk's input, and thus
+    // its RETURNING set, always stays under the cap.
+    let rowsUpserted = 0;
+    for (let i = 0; i < rows.length; i += SUPABASE_MAX_PAGE_SIZE) {
+      const chunk = rows.slice(i, i + SUPABASE_MAX_PAGE_SIZE);
+      const { data: upsertedChunk, error } = await db
+        .from("daily_prices")
+        .upsert(chunk, { onConflict: "company_id,trade_date,adjustment_type" })
+        .select("id");
+      if (error) throw new Error(`daily_prices upsert failed: ${error.message}`);
+      rowsUpserted += upsertedChunk?.length ?? chunk.length;
+    }
+    outcome.rowsUpserted = rowsUpserted;
   } catch (e) {
     outcome.status = "error";
     outcome.reason = (e as Error).message;

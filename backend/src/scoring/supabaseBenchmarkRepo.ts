@@ -17,6 +17,7 @@
 // ============================================================================
 
 import { getDbClient } from "../db/client";
+import { fetchAllPaginated } from "../db/paginate";
 import type { PeriodType } from "../types/domain";
 import {
   selectLatestPerCompanyAsOf,
@@ -32,15 +33,20 @@ async function fetchObservationsForMetric(
 ): Promise<CompanyMetricObservationWithSector[]> {
   const db = getDbClient();
 
-  const { data: metricRows, error: metricError } = await db
-    .from("calculated_metrics")
-    .select("company_id, period_end, value")
-    .eq("metric_name", metricName)
-    .eq("period_type", periodType)
-    .eq("calculation_version", calculationVersion);
-  if (metricError) throw new Error(`calculated_metrics query failed for ${metricName}: ${metricError.message}`);
-
-  const rows = (metricRows ?? []) as Array<{ company_id: string; period_end: string; value: number | null }>;
+  // Milestone 14D.1: this deliberately has NO company_id filter — it fans
+  // out across every company for one metric — so a table-wide truncation
+  // (calculated_metrics already exceeds 1000 rows total in the live DB)
+  // is a real risk here, not just a per-company one. Paginated.
+  const rows = await fetchAllPaginated<{ company_id: string; period_end: string; value: number | null }>((from, to) =>
+    db
+      .from("calculated_metrics")
+      .select("company_id, period_end, value")
+      .eq("metric_name", metricName)
+      .eq("period_type", periodType)
+      .eq("calculation_version", calculationVersion)
+      .order("id", { ascending: true }) // deterministic order required for .range() to page correctly
+      .range(from, to)
+  );
   if (rows.length === 0) return [];
 
   const companyIds = [...new Set(rows.map((r) => r.company_id))];

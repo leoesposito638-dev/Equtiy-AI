@@ -46,6 +46,7 @@
 
 import { createHash } from "crypto";
 import { getDbClient } from "../db/client";
+import { fetchAllPaginated } from "../db/paginate";
 import { selectForwardEps, forwardPe } from "../calculations/forwardEps";
 import type { EarningsProvider, EstimateRecord, MarketDataProvider, ProviderCompanyRef } from "../providers/interfaces";
 
@@ -91,17 +92,20 @@ async function getLatestReportedAnnualPeriodEnd(companyId: string): Promise<stri
 
 async function getExistingEstimateKeys(companyId: string): Promise<Set<string>> {
   const db = getDbClient();
-  const { data, error } = await db
-    .from("estimates")
-    .select("metric_name, estimate_period_end, estimate_period_type")
-    .eq("company_id", companyId);
-  if (error) throw new Error(`estimates existing-keys query failed: ${error.message}`);
-  return new Set(
-    (data ?? []).map(
-      (r: { metric_name: string; estimate_period_end: string; estimate_period_type: string }) =>
-        `${r.metric_name}|${r.estimate_period_end}|${r.estimate_period_type}`
-    )
+  // Milestone 14D.1: estimates has no unique constraint (see this file's own
+  // header) so re-runs can keep accumulating rows for one company over
+  // time — an unpaginated select here would eventually silently truncate
+  // the dedup check itself, defeating it. Paginated.
+  const rows = await fetchAllPaginated<{ metric_name: string; estimate_period_end: string; estimate_period_type: string }>(
+    (from, to) =>
+      db
+        .from("estimates")
+        .select("metric_name, estimate_period_end, estimate_period_type")
+        .eq("company_id", companyId)
+        .order("id", { ascending: true })
+        .range(from, to)
   );
+  return new Set(rows.map((r) => `${r.metric_name}|${r.estimate_period_end}|${r.estimate_period_type}`));
 }
 
 async function insertEstimatesDataSource(sourceUrl: string | undefined): Promise<string> {
