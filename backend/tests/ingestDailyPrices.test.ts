@@ -119,6 +119,12 @@ function makeMarketDataProvider(result: ProviderResult<DailyPrice[]>): MarketDat
     async getHistoricalPrices(_ref: ProviderCompanyRef, _from: string, _to: string) {
       return result;
     },
+    async getDebtMetricsHistory() {
+      return { status: "unavailable", data: null, source: null };
+    },
+    async getCompanyProfile() {
+      return { status: "unavailable", data: null, source: null };
+    },
   };
 }
 

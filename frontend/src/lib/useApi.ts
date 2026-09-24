@@ -9,7 +9,7 @@
 // real problems.
 // ============================================================================
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DEMO_MODE } from "./config";
 import { api, ApiError } from "./apiClient";
 import { filterToDemoUniverse } from "./demoUniverse";
@@ -98,6 +98,31 @@ export function useCompanyScoresMap(companies: Company[] | null): AsyncState<Map
     new Map(Object.entries(FIXTURE_SCORES)),
     [ids]
   );
+}
+
+/** Milestone 16C item 4 — real backend search (GET /search, already scoped
+ * to the demo universe and, as of this milestone, safe against filter-
+ * injection — see api/routes/search.ts). Debounced 250ms so every
+ * keystroke doesn't fire a request; demo mode has no backend to debounce
+ * against, so it filters FIXTURE_COMPANIES client-side instead, same as
+ * this component did before this milestone. An empty query never hits the
+ * network — it resolves to an empty list immediately. */
+export function useCompanySearch(rawQuery: string): AsyncState<Company[]> {
+  const trimmed = rawQuery.trim();
+  const [debounced, setDebounced] = useState("");
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(trimmed), DEMO_MODE ? 0 : 250);
+    return () => clearTimeout(t);
+  }, [trimmed]);
+
+  const demoResults = useMemo(() => {
+    if (!debounced) return [];
+    const q = debounced.toLowerCase();
+    return FIXTURE_COMPANIES.filter((c) => c.name.toLowerCase().includes(q) || c.ticker.toLowerCase().includes(q)).slice(0, 6);
+  }, [debounced]);
+
+  return useAsync(() => (debounced ? api.search(debounced) : Promise.resolve([])), demoResults, [debounced]);
 }
 
 export function useCompanyFinancials(id: string | undefined): AsyncState<FinancialMetricRow[]> {

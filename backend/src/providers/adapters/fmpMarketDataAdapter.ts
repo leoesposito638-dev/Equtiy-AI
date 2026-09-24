@@ -50,6 +50,7 @@
 // ============================================================================
 
 import type {
+  CompanyProfile,
   DailyPrice,
   FmpDebtMetricsPeriod,
   LivePrice,
@@ -119,6 +120,16 @@ interface FmpQuoteRow {
   symbol?: string;
   price?: number;
   timestamp?: number; // unix seconds, verified live (e.g. 1789055787)
+}
+
+/** Shape of one element of FMP's GET /profile response. Only `description`
+ *  is declared — the real response also has `image` (logo URL), `website`,
+ *  `sector`/`industry`, etc., deliberately not read here (Milestone 16C
+ *  uses synthetic initials avatars, not FMP's logo asset; sector/industry
+ *  are already sourced elsewhere). */
+interface FmpProfileRow {
+  symbol?: string;
+  description?: string;
 }
 
 /** Shape of one element of FMP's GET /balance-sheet-statement response.
@@ -525,6 +536,40 @@ export class FmpMarketDataAdapter implements MarketDataProvider {
         providerType: "MARKET_DATA",
         sourceUrl: bsResult.redactedUrl,
         currency: "USD",
+      },
+    };
+  }
+
+  /** Milestone 16C. Sourced from /stable/profile. Returns FMP's description
+   *  field UNTRUNCATED and UNMODIFIED — see CompanyProfile's doc comment for
+   *  why shortening belongs in ingestion, not here. An empty string is
+   *  treated the same as a missing field (FMP has returned "" for some
+   *  tickers historically per community reports) — never passed through as
+   *  if it were real content. */
+  async getCompanyProfile(ref: ProviderCompanyRef): Promise<ProviderResult<CompanyProfile>> {
+    const result = await fmpGet<FmpProfileRow[] | FmpProfileRow>(`/profile?symbol=${encodeURIComponent(ref.ticker)}`, this.apiKey);
+    if (!result.ok) {
+      return { status: "unavailable", data: null, source: null, unavailableReason: result.reason };
+    }
+
+    const row = Array.isArray(result.body) ? result.body[0] : result.body;
+    const description = row?.description?.trim();
+    if (!description) {
+      return {
+        status: "unavailable",
+        data: null,
+        source: null,
+        unavailableReason: `FMP returned no usable description for ${ref.ticker} at ${result.redactedUrl}.`,
+      };
+    }
+
+    return {
+      status: "available",
+      data: { description },
+      source: {
+        providerName: "Financial Modeling Prep",
+        providerType: "MARKET_DATA",
+        sourceUrl: result.redactedUrl,
       },
     };
   }

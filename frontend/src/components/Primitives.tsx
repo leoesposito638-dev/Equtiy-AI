@@ -2,6 +2,22 @@ import React from "react";
 import { ArrowUp, ArrowDown, Minus, ShieldCheck, AlertTriangle } from "lucide-react";
 import { C } from "../styles/tokens";
 import { isLowConfidence, verdictColor, verdictLabel } from "../lib/scoreDisplay";
+import { avatarInitial, avatarColor } from "../lib/companyIdentity";
+import { FinancialTerm } from "./FinancialTerm";
+
+/** Milestone 16C — deterministic initials avatar, matching Prototype 1.2's
+ * CompanyLogo (rounded-square, solid color, single white initial). No
+ * external logo assets this milestone. */
+export function CompanyAvatar({ name, ticker, size = 40 }: { name: string; ticker: string; size?: number }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: size * 0.28, backgroundColor: avatarColor(ticker), flexShrink: 0,
+      display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: size * 0.42,
+    }}>
+      {avatarInitial(name)}
+    </div>
+  );
+}
 
 export function ChangeTag({ value, size = "sm" }: { value: number | null; size?: "sm" | "lg" }) {
   const v = value ?? 0;
@@ -100,7 +116,7 @@ export function CategoryBar({ label, value, confidence }: { label: string; value
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
       <div style={{ width: 148, fontSize: 13, color: C.textSoft, flexShrink: 0, display: "flex", alignItems: "center", gap: 5 }}>
-        {label}
+        <FinancialTerm label={label} />
         {lowConfidence && <span title="Lower confidence — limited data coverage"><AlertTriangle size={11} color={C.amber} /></span>}
       </div>
       <div style={{ flex: 1, height: 6, backgroundColor: C.surfaceSunken, borderRadius: 999, overflow: "hidden", border: `1px solid ${C.border}` }}>

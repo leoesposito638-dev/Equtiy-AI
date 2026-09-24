@@ -94,6 +94,20 @@ export interface FmpDebtMetricsPeriod {
   depreciationAndAmortization: number | null;
 }
 
+/** Milestone 16C — a company's own self-description, for the Company page
+ *  identity block. Deliberately narrow (just the one field this milestone
+ *  needs, not FMP's whole profile payload) so nothing downstream is tempted
+ *  to read a field here that was never reviewed for this purpose (e.g.
+ *  FMP's `image` logo URL — out of scope this milestone, synthetic
+ *  initials avatars are used instead, see frontend/src/lib/companyIdentity.ts). */
+export interface CompanyProfile {
+  /** FMP's own full-paragraph description, UNTRUNCATED — shortening to one
+   *  sentence happens in ingestion (calculations/textShortening.ts), never
+   *  here, so this provider layer always returns exactly what the source
+   *  said. */
+  description: string | null;
+}
+
 export interface EarningsRecord {
   periodStart?: string;
   periodEnd: string;
@@ -198,6 +212,9 @@ export interface MarketDataProvider {
    *  net_debt_to_ebitda_fmp) — never SEC EDGAR. See FmpDebtMetricsPeriod's
    *  own doc comment. */
   getDebtMetricsHistory(ref: ProviderCompanyRef): Promise<ProviderResult<FmpDebtMetricsPeriod[]>>;
+  /** Milestone 16C — sourced from FMP /profile only (never SEC EDGAR, which
+   *  has no free-text company-description field). See CompanyProfile. */
+  getCompanyProfile(ref: ProviderCompanyRef): Promise<ProviderResult<CompanyProfile>>;
 }
 
 export interface FinancialDataProvider {

@@ -94,6 +94,15 @@ function makeProvider(quote: ProviderResult<Quote>, ratios: ProviderResult<Valua
     async getValuationRatios(_ref: ProviderCompanyRef) {
       return ratios;
     },
+    async getLivePrice() {
+      return { status: "unavailable", data: null, source: null };
+    },
+    async getDebtMetricsHistory() {
+      return { status: "unavailable", data: null, source: null };
+    },
+    async getCompanyProfile() {
+      return { status: "unavailable", data: null, source: null };
+    },
   };
 }
 

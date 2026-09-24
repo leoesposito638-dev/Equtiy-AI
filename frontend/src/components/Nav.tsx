@@ -3,12 +3,35 @@ import { NavLink } from "react-router-dom";
 import { Home, Building2, Compass, Bell } from "lucide-react";
 import { C } from "../styles/tokens";
 
-const NAV_ITEMS = [
-  { to: "/", label: "Overview", icon: Home, end: true },
-  { to: "/companies", label: "My Companies", icon: Building2, end: false },
-  { to: "/discover", label: "Discover", icon: Compass, end: false },
-  { to: "/alerts", label: "Alerts", icon: Bell, end: false },
+interface NavItem {
+  to: string;
+  label: string;
+  icon: React.ComponentType<any>;
+  end: boolean;
+}
+
+// Milestone 16C item 5 — grouped sidebar sections, matching Prototype 1.2's
+// SIDEBAR_SECTIONS (equity-ai-prototype-1.2.jsx line 472) with one
+// deliberate difference: the prototype's PORTFOLIO section has two items
+// ("Watchlist" and "Companies") because its fixture data models them as
+// separate views; this app has one real page for that (MyCompaniesPage, at
+// /companies) so PORTFOLIO has one item. No SETTINGS section — there is no
+// user-preferences backend to put behind it yet (see the Milestone 16C
+// report's Prototype-gap plan, milestone 5).
+export const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
+  { label: "RESEARCH", items: [
+    { to: "/", label: "Dashboard", icon: Home, end: true },
+    { to: "/discover", label: "Discover", icon: Compass, end: false },
+  ] },
+  { label: "PORTFOLIO", items: [
+    { to: "/companies", label: "My Companies", icon: Building2, end: false },
+  ] },
+  { label: "MONITORING", items: [
+    { to: "/alerts", label: "Alerts", icon: Bell, end: false },
+  ] },
 ];
+
+const NAV_ITEMS: NavItem[] = NAV_SECTIONS.flatMap((section) => section.items);
 
 export function Sidebar({ alertCount }: { alertCount: number }) {
   return (
@@ -16,19 +39,24 @@ export function Sidebar({ alertCount }: { alertCount: number }) {
       <div style={{ padding: "26px 24px 22px" }}>
         <div style={{ fontSize: 18, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>equity<span style={{ color: C.textFaint, fontWeight: 500 }}>AI</span></div>
       </div>
-      <nav style={{ padding: "4px 12px", display: "flex", flexDirection: "column", gap: 2 }}>
-        {NAV_ITEMS.map((item) => (
-          <NavLink key={item.to} to={item.to} end={item.end} style={({ isActive }) => ({
-            display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, textDecoration: "none",
-            backgroundColor: isActive ? C.accentSoft : "transparent", color: isActive ? C.accent : C.textSoft,
-            fontSize: 13.5, fontWeight: isActive ? 600 : 500,
-          })}>
-            <item.icon size={16} strokeWidth={2} />
-            <span style={{ flex: 1 }}>{item.label}</span>
-            {item.to === "/alerts" && alertCount > 0 && (
-              <span style={{ fontSize: 11, fontWeight: 700, color: C.surface, backgroundColor: C.accent, borderRadius: 999, padding: "1px 6px", minWidth: 16, textAlign: "center" }}>{alertCount}</span>
-            )}
-          </NavLink>
+      <nav style={{ padding: "0 12px", display: "flex", flexDirection: "column", gap: 18, overflowY: "auto" }}>
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.label}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, color: C.textFaint, letterSpacing: "0.06em", padding: "0 12px 6px" }}>{section.label}</div>
+            {section.items.map((item) => (
+              <NavLink key={item.to} to={item.to} end={item.end} style={({ isActive }) => ({
+                display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, textDecoration: "none",
+                backgroundColor: isActive ? C.accentSoft : "transparent", color: isActive ? C.accent : C.textSoft,
+                fontSize: 13.5, fontWeight: isActive ? 600 : 500, marginBottom: 2,
+              })}>
+                <item.icon size={16} strokeWidth={2} />
+                <span style={{ flex: 1 }}>{item.label}</span>
+                {item.to === "/alerts" && alertCount > 0 && (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: C.surface, backgroundColor: C.accent, borderRadius: 999, padding: "1px 6px", minWidth: 16, textAlign: "center" }}>{alertCount}</span>
+                )}
+              </NavLink>
+            ))}
+          </div>
         ))}
       </nav>
       <div style={{ marginTop: "auto", padding: "16px 24px", fontSize: 11, color: C.textFaint }}>Equity AI</div>

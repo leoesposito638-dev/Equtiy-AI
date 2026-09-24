@@ -61,7 +61,7 @@ export default function OverviewPage() {
         <p style={{ fontSize: 14.5, color: C.textSoft, margin: "5px 0 0" }}>Your companies, continuously analyzed.</p>
       </div>
 
-      <SearchBar companies={companies} />
+      <SearchBar />
 
       <div style={{ marginTop: 34 }}>
         <SectionLabel>Your companies</SectionLabel>

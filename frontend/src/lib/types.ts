@@ -14,6 +14,11 @@ export interface Company {
   sector?: string;
   industry?: string;
   country?: string;
+  /** Milestone 16C — real, FMP-sourced, shortened to one sentence for the
+   *  16 FMP-entitled companies; null for the other companies (never
+   *  fabricated — see lib/companyIdentity.ts's fallbackDescription for the
+   *  honest, sector/industry-only substitute shown in that case). */
+  description?: string | null;
 }
 
 export type PeriodType = "QUARTER" | "ANNUAL" | "TTM" | "INSTANT";

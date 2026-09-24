@@ -162,6 +162,12 @@ function makeMarketDataProvider(livePrice: ProviderResult<LivePrice>): MarketDat
     async getLivePrice(_ref: ProviderCompanyRef) {
       return livePrice;
     },
+    async getDebtMetricsHistory() {
+      return { status: "unavailable", data: null, source: null };
+    },
+    async getCompanyProfile() {
+      return { status: "unavailable", data: null, source: null };
+    },
   };
 }
 

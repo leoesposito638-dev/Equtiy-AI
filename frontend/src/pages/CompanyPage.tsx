@@ -9,22 +9,12 @@ import { latestValuationMetrics } from "../lib/valuationMetrics";
 import { keyFinancials, formatKeyFinancialValue } from "../lib/keyFinancials";
 import { formatValuationValue } from "../lib/valuationMetrics";
 import { formatPercent, formatPlainNumber } from "../lib/formatters";
-import { Card, CategoryBar, ConfidenceBadge, ChangeTag, ScoreGauge, SectionLabel, StatusBadge } from "../components/Primitives";
+import { Card, CategoryBar, CompanyAvatar, ConfidenceBadge, ChangeTag, ScoreGauge, SectionLabel, StatusBadge } from "../components/Primitives";
+import { FinancialTerm } from "../components/FinancialTerm";
 import { DataUnavailable, ErrorBlock, LoadingBlock } from "../components/States";
 import { C, CATEGORY_LABELS, CATEGORY_ORDER, severityColor, severityFromImportance } from "../styles/tokens";
 import { isComparableChange } from "../lib/scoreDisplay";
-
-function OpportunityChip({ score, confidence }: { score: number | null; confidence: number }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", backgroundColor: C.surfaceSunken, borderRadius: 10, border: `1px solid ${C.border}` }}>
-      <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{score ?? <DataUnavailable label="—" />}</div>
-      <div>
-        <div style={{ fontSize: 11.5, fontWeight: 700, color: C.textFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>Opportunity Score</div>
-        <div style={{ fontSize: 11, color: C.textSoft }}>How interesting the stock looks right now — kept separate from fundamentals</div>
-      </div>
-    </div>
-  );
-}
+import { fallbackDescription } from "../lib/companyIdentity";
 
 function ThesisSection({ title, text, tone }: { title: string; text: string | null; tone: "bull" | "base" | "bear" }) {
   const color = tone === "bull" ? C.positive : tone === "bear" ? C.negative : C.text;
@@ -78,6 +68,7 @@ export default function CompanyPage() {
   const thesis = analysis?.thesis;
   const isFollowed = followed.has(id);
   const comparable = isComparableChange(fundamental);
+  const description = company.description ?? fallbackDescription(company.sector, company.industry);
 
   return (
     <div style={{ maxWidth: 780 }}>
@@ -86,11 +77,15 @@ export default function CompanyPage() {
       </button>
 
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 22, gap: 16, flexWrap: "wrap" }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: C.text, margin: 0, letterSpacing: "-0.01em" }}>{company.name}</h1>
-          <p style={{ fontSize: 13.5, color: C.textFaint, margin: "5px 0 0" }}>{company.ticker} · {company.exchange} · {company.sector}</p>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flex: 1, minWidth: 200 }}>
+          <CompanyAvatar name={company.name} ticker={company.ticker} size={52} />
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, color: C.text, margin: 0, letterSpacing: "-0.01em" }}>{company.name}</h1>
+            <p style={{ fontSize: 13.5, color: C.textFaint, margin: "5px 0 0" }}>{company.ticker} · {company.exchange} · {company.sector}</p>
+            {description && <p style={{ fontSize: 13.5, color: C.textSoft, margin: "8px 0 0", lineHeight: 1.5, maxWidth: 480 }}>{description}</p>}
+          </div>
         </div>
-        <button onClick={() => toggle(id)} style={{ padding: "9px 18px", borderRadius: 9, cursor: "pointer", fontSize: 13, fontWeight: 600, border: isFollowed ? `1px solid ${C.border}` : "none", backgroundColor: isFollowed ? C.surface : C.accent, color: isFollowed ? C.text : C.surface }}>
+        <button onClick={() => toggle(id)} style={{ padding: "9px 18px", borderRadius: 9, cursor: "pointer", fontSize: 13, fontWeight: 600, flexShrink: 0, border: isFollowed ? `1px solid ${C.border}` : "none", backgroundColor: isFollowed ? C.surface : C.accent, color: isFollowed ? C.text : C.surface }}>
           {isFollowed ? "Following" : "Follow"}
         </button>
       </div>
@@ -129,7 +124,6 @@ export default function CompanyPage() {
               </div>
             </div>
           </div>
-          {fundamental && <OpportunityChip score={analysis?.snapshot?.opportunity_score ?? null} confidence={fundamental.confidence} />}
         </Card>
       )}
 
@@ -154,7 +148,7 @@ export default function CompanyPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 20 }}>
           {growthMetrics.map((m) => (
             <div key={m.metricName}>
-              <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}>{m.label}</div>
+              <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}><FinancialTerm label={m.label} /></div>
               <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>
                 {m.value != null ? (m.unit === "%" ? formatPercent(m.value) : formatPlainNumber(m.value)) : <DataUnavailable />}
               </div>
@@ -180,7 +174,7 @@ export default function CompanyPage() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 20 }}>
             {keyFinancialValues.map((f) => (
               <div key={f.key}>
-                <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}>{f.label}</div>
+                <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}><FinancialTerm label={f.label} /></div>
                 <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>
                   {formatKeyFinancialValue(f)}
                 </div>
@@ -198,7 +192,7 @@ export default function CompanyPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 20 }}>
           {valuationMetrics.map((m) => (
             <div key={m.metricName}>
-              <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}>{m.label}</div>
+              <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}><FinancialTerm label={m.label} /></div>
               <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>
                 {m.value != null ? formatValuationValue(m) : <DataUnavailable />}
               </div>

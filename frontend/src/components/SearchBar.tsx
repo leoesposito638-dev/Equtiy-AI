@@ -1,19 +1,19 @@
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search } from "lucide-react";
 import { C, FONT } from "../styles/tokens";
-import type { Company } from "../lib/types";
+import { useCompanySearch } from "../lib/useApi";
 
-export function SearchBar({ companies }: { companies: Company[] }) {
+// Milestone 16C item 4: queries the real backend (GET /search, debounced)
+// instead of filtering an already-loaded company list client-side — see
+// useCompanySearch's own doc comment in lib/useApi.ts.
+export function SearchBar() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [focused, setFocused] = useState(false);
+  const { data: results, loading } = useCompanySearch(query);
 
-  const results = useMemo(() => {
-    if (!query.trim()) return [];
-    const q = query.toLowerCase();
-    return companies.filter((c) => c.name.toLowerCase().includes(q) || c.ticker.toLowerCase().includes(q)).slice(0, 6);
-  }, [query, companies]);
+  const showDropdown = focused && query.trim().length > 0;
 
   return (
     <div style={{ position: "relative", maxWidth: 480 }}>
@@ -28,17 +28,23 @@ export function SearchBar({ companies }: { companies: Company[] }) {
           style={{ border: "none", outline: "none", fontSize: 14, flex: 1, color: C.text, backgroundColor: "transparent", fontFamily: FONT }}
         />
       </div>
-      {focused && results.length > 0 && (
+      {showDropdown && (
         <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, backgroundColor: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, overflow: "hidden", zIndex: 20, boxShadow: "0 8px 24px rgba(20,23,28,0.08)" }}>
-          {results.map((c) => (
-            <button key={c.ticker} onClick={() => { navigate(`/company/${c.id}`); setQuery(""); }}
-              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "10px 16px", border: "none", background: "none", cursor: "pointer", borderBottom: `1px solid ${C.border}`, textAlign: "left" }}>
-              <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text }}>{c.name}</span>
-                <span style={{ fontSize: 12, color: C.textFaint }}>{c.ticker}</span>
-              </span>
-            </button>
-          ))}
+          {results && results.length > 0 ? (
+            results.map((c) => (
+              <button key={c.ticker} onClick={() => { navigate(`/company/${c.id}`); setQuery(""); }}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "10px 16px", border: "none", background: "none", cursor: "pointer", borderBottom: `1px solid ${C.border}`, textAlign: "left" }}>
+                <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text }}>{c.name}</span>
+                  <span style={{ fontSize: 12, color: C.textFaint }}>{c.ticker}</span>
+                </span>
+              </button>
+            ))
+          ) : (
+            <div style={{ padding: "10px 16px", fontSize: 12.5, color: C.textFaint }}>
+              {loading ? "Searching…" : `No matches for "${query.trim()}"`}
+            </div>
+          )}
         </div>
       )}
     </div>

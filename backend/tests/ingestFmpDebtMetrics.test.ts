@@ -97,6 +97,9 @@ function makeProvider(result: ProviderResult<FmpDebtMetricsPeriod[]>): MarketDat
     async getDebtMetricsHistory(_ref: ProviderCompanyRef) {
       return result;
     },
+    async getCompanyProfile() {
+      return { status: "unavailable", data: null, source: null };
+    },
   };
 }
 

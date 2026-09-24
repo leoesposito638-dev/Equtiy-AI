@@ -53,6 +53,9 @@ export const unavailableMarketDataProvider: MarketDataProvider = {
   async getDebtMetricsHistory(_ref: ProviderCompanyRef) {
     return unavailable();
   },
+  async getCompanyProfile(_ref: ProviderCompanyRef) {
+    return unavailable();
+  },
 };
 
 export const unavailableFinancialDataProvider: FinancialDataProvider = {
