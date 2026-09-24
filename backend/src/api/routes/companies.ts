@@ -104,22 +104,35 @@ router.get("/:id/valuation", async (req, res) => {
 
 router.get("/:id/scores", async (req, res) => {
   const db = getDbClient();
-  const [fundamental, categories] = await Promise.all([
+  const [fundamentalHistory, categories] = await Promise.all([
+    // Milestone 16B: fetch the 2 most recent rows, not 1. fundamental_scores
+    // stores previous_score/score_change as static columns written at
+    // calculation time, but NOT which calculation_version that prior score
+    // belonged to — and every rescore (v1.1 -> v1.2 -> v1.3 etc.) writes a
+    // brand-new row rather than updating the old one. Without the second
+    // row here, the frontend has no way to tell a real score change from
+    // "the scoring model changed underneath the company." This is a plain
+    // additional SELECT on an existing table/column — no scoring math,
+    // ingestion pipeline, or schema change.
     db
       .from("fundamental_scores")
       .select("*")
       .eq("company_id", req.params.id)
       .order("calculated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .limit(2),
     db
       .from("category_scores")
       .select("*, score_categories(category_key, name)")
       .eq("company_id", req.params.id)
       .order("calculated_at", { ascending: false }),
   ]);
-  if (fundamental.error) return res.status(500).json({ error: fundamental.error.message });
+  if (fundamentalHistory.error) return res.status(500).json({ error: fundamentalHistory.error.message });
   if (categories.error) return res.status(500).json({ error: categories.error.message });
+
+  const [latest, previous] = fundamentalHistory.data ?? [];
+  const fundamental = latest
+    ? { ...latest, previous_calculation_version: previous?.calculation_version ?? null }
+    : null;
 
   // Milestone 13C: category_scores can now legitimately hold rows from more
   // than one calculation_version for the same category (v1.0 history kept
@@ -136,7 +149,7 @@ router.get("/:id/scores", async (req, res) => {
     return true;
   });
 
-  res.json({ data: { fundamental: fundamental.data, categories: latestPerCategory } });
+  res.json({ data: { fundamental, categories: latestPerCategory } });
 });
 
 router.get("/:id/analysis", async (req, res) => {

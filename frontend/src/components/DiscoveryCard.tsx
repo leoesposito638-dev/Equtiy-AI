@@ -3,6 +3,7 @@ import { useCompanyAnalysis, useCompanyScores } from "../lib/useApi";
 import { primaryScore } from "../lib/primaryScore";
 import { Card } from "./Primitives";
 import { C } from "../styles/tokens";
+import { isLowConfidence, verdictLabel, verdictColor } from "../lib/scoreDisplay";
 import type { Company } from "../lib/types";
 
 export function DiscoveryCard({ company, onAnalyze, onFollow, followed, rank }: {
@@ -30,9 +31,13 @@ export function DiscoveryCard({ company, onAnalyze, onFollow, followed, rank }: 
           </div>
         </div>
         <div style={{ textAlign: "right", flexShrink: 0 }}>
-          <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{headline?.score ?? "—"}</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: headline && isLowConfidence(headline.confidence) ? C.textFaint : C.text, fontVariantNumeric: "tabular-nums" }}>
+            {headline?.score ?? "—"}
+          </div>
           {headline ? (
-            <div style={{ fontSize: 10, color: C.textFaint }}>{headline.label}</div>
+            <div title={headline.label} style={{ fontSize: 10, fontWeight: 600, color: verdictColor(headline.score, headline.confidence) }}>
+              {verdictLabel(headline.score, headline.confidence)}
+            </div>
           ) : (
             <div style={{ fontSize: 10, color: C.textFaint }}>Not yet scored</div>
           )}

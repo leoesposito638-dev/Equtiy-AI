@@ -11,6 +11,7 @@ import { ChevronRight, X } from "lucide-react";
 import { useCompanyScores } from "../lib/useApi";
 import { ChangeTag, ConfidenceBadge, StatusBadge } from "./Primitives";
 import { C } from "../styles/tokens";
+import { isComparableChange } from "../lib/scoreDisplay";
 import type { Company } from "../lib/types";
 
 export function CompanyListRow({ company, last, onClick, onUnfollow }: {
@@ -18,6 +19,7 @@ export function CompanyListRow({ company, last, onClick, onUnfollow }: {
 }) {
   const { data } = useCompanyScores(company.id);
   const fundamental = data?.fundamental;
+  const comparable = isComparableChange(fundamental);
 
   return (
     <div onClick={onClick} style={{ display: "flex", alignItems: "center", padding: "14px 18px", cursor: "pointer", borderBottom: last ? "none" : `1px solid ${C.border}`, gap: 14 }}>
@@ -29,8 +31,14 @@ export function CompanyListRow({ company, last, onClick, onUnfollow }: {
         <>
           <div className="hidden sm:block"><ConfidenceBadge confidence={fundamental.confidence} coverage={fundamental.data_coverage} compact /></div>
           <div style={{ width: 50, textAlign: "right", fontSize: 15, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{fundamental.score}</div>
-          <div style={{ width: 54, display: "flex", justifyContent: "flex-end" }}><ChangeTag value={fundamental.score_change} /></div>
-          <div className="hidden sm:block" style={{ width: 90, textAlign: "right" }}><StatusBadge score={fundamental.score} /></div>
+          <div style={{ width: 54, display: "flex", justifyContent: "flex-end" }}>
+            {comparable ? (
+              <ChangeTag value={fundamental.score_change} />
+            ) : (
+              <span title="Scored under a new model version — not compared to the prior score" style={{ fontSize: 12, color: C.textFaint }}>—</span>
+            )}
+          </div>
+          <div className="hidden sm:block" style={{ width: 90, textAlign: "right" }}><StatusBadge score={fundamental.score} confidence={fundamental.confidence} /></div>
         </>
       ) : (
         <span style={{ fontSize: 12, color: C.textFaint }}>Score pending</span>

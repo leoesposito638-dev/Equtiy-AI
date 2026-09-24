@@ -13,6 +13,11 @@ export function formatPlainNumber(value: number, decimals = 1): string {
   return value.toFixed(decimals);
 }
 
+/** A valuation multiple (P/E, EV/EBITDA, ...): 27.4691823993371 -> "27.5x". */
+export function formatMultiple(value: number, decimals = 1): string {
+  return `${value.toFixed(decimals)}x`;
+}
+
 const CURRENCY_SCALE: [number, string][] = [
   [1e12, "T"],
   [1e9, "B"],

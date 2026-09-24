@@ -36,15 +36,20 @@ export const CATEGORY_LABELS: Record<string, string> = {
 };
 export const CATEGORY_ORDER = Object.keys(CATEGORY_LABELS);
 
-export function statusFor(score: number): "Excellent" | "Strong" | "Improving" | "Weak" {
+// Milestone 16B: "Improving" was a score-TIER name (65-79) being read as a
+// TREND word — a score of 78.4 that fell 0.5 points still said "Improving"
+// right next to a down arrow. These are score-level tiers only; whether the
+// company is actually improving is a separate, version-aware question (see
+// scoreDisplay.ts's isComparableChange()) and is never implied here.
+export function statusFor(score: number): "Excellent" | "Strong" | "Fair" | "Weak" {
   if (score >= 90) return "Excellent";
   if (score >= 80) return "Strong";
-  if (score >= 65) return "Improving";
+  if (score >= 65) return "Fair";
   return "Weak";
 }
 export function statusColor(status: string): string {
   if (status === "Excellent" || status === "Strong") return C.positive;
-  if (status === "Improving") return C.textSoft;
+  if (status === "Fair") return C.textSoft;
   return C.negative;
 }
 export function severityColor(sev: string): string {

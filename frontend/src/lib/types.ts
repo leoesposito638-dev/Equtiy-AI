@@ -57,6 +57,10 @@ export interface FundamentalScoreRow {
   previous_score: number | null;
   score_change: number | null;
   calculated_at: string;
+  /** calculation_version of the row previous_score/score_change were taken
+   * from, or null if there was no prior row. Absent -> treat as unknown
+   * (not comparable). See scoreDisplay.ts's isComparableChange(). */
+  previous_calculation_version?: string | null;
 }
 
 /** GET /companies/:id/scores -> data.categories[] (joined with score_categories) */

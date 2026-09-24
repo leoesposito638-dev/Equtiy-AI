@@ -1,6 +1,7 @@
 import React from "react";
 import { ArrowUp, ArrowDown, Minus, ShieldCheck, AlertTriangle } from "lucide-react";
-import { C, statusFor, statusColor } from "../styles/tokens";
+import { C } from "../styles/tokens";
+import { isLowConfidence, verdictColor, verdictLabel } from "../lib/scoreDisplay";
 
 export function ChangeTag({ value, size = "sm" }: { value: number | null; size?: "sm" | "lg" }) {
   const v = value ?? 0;
@@ -16,12 +17,17 @@ export function ChangeTag({ value, size = "sm" }: { value: number | null; size?:
   );
 }
 
-export function StatusBadge({ score }: { score: number }) {
-  const status = statusFor(score);
+// Milestone 16B: confidence is required, not optional — a verdict word
+// ("Excellent", "Fair", ...) is never shown below LOW_CONFIDENCE_THRESHOLD.
+// Below it, this renders "Insufficient data" in neutral gray instead.
+export function StatusBadge({ score, confidence }: { score: number; confidence: number }) {
+  const label = verdictLabel(score, confidence);
+  const color = verdictColor(score, confidence);
   return (
-    <span style={{ fontSize: 12.5, fontWeight: 600, color: statusColor(status), display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <span style={{ width: 6, height: 6, borderRadius: 999, backgroundColor: statusColor(status) }} />
-      {status}
+    <span title={isLowConfidence(confidence) ? "Confidence is too low to state a verdict — showing the raw score only" : undefined}
+      style={{ fontSize: 12.5, fontWeight: 600, color, display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <span style={{ width: 6, height: 6, borderRadius: 999, backgroundColor: color }} />
+      {label}
     </span>
   );
 }
@@ -65,17 +71,22 @@ export function PageHeader({ title, subtitle }: { title: string; subtitle?: stri
   );
 }
 
-export function ScoreGauge({ score, size = 140, label = "Fundamental Score" }: { score: number; size?: number; label?: string }) {
+// Milestone 16B: a low-confidence score is never drawn in the same
+// authoritative green/red as a well-covered one — the ring and the number
+// both drop to neutral gray, and the number's opacity is reduced, so a
+// glance at the gauge alone can't be mistaken for a confident verdict.
+export function ScoreGauge({ score, confidence, size = 140, label = "Fundamental Score" }: { score: number; confidence: number; size?: number; label?: string }) {
   const r = size / 2 - 10, cx = size / 2, cy = size / 2;
   const circumference = 2 * Math.PI * r, pct = score / 100;
-  const color = statusColor(statusFor(score));
+  const lowConfidence = isLowConfidence(confidence);
+  const color = lowConfidence ? C.textFaint : verdictColor(score, confidence);
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         <circle cx={cx} cy={cy} r={r} fill="none" stroke={C.border} strokeWidth="10" />
         <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="10" strokeDasharray={circumference}
-          strokeDashoffset={circumference * (1 - pct)} strokeLinecap="round" transform={`rotate(-90 ${cx} ${cy})`} />
-        <text x={cx} y={cy - 2} textAnchor="middle" fontSize={size * 0.28} fontWeight="700" fill={C.text} style={{ fontVariantNumeric: "tabular-nums" }}>{score}</text>
+          strokeDashoffset={circumference * (1 - pct)} strokeLinecap="round" transform={`rotate(-90 ${cx} ${cy})`} opacity={lowConfidence ? 0.55 : 1} />
+        <text x={cx} y={cy - 2} textAnchor="middle" fontSize={size * 0.28} fontWeight="700" fill={lowConfidence ? C.textFaint : C.text} style={{ fontVariantNumeric: "tabular-nums" }}>{score}</text>
         <text x={cx} y={cy + size * 0.15} textAnchor="middle" fontSize={size * 0.07} fontWeight="600" fill={C.textFaint}>/ 100</text>
       </svg>
       <div style={{ fontSize: 11.5, fontWeight: 600, color: C.textFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>

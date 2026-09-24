@@ -7,10 +7,12 @@ import { primaryScore } from "../lib/primaryScore";
 import { latestGrowthMetrics } from "../lib/growthMetrics";
 import { latestValuationMetrics } from "../lib/valuationMetrics";
 import { keyFinancials, formatKeyFinancialValue } from "../lib/keyFinancials";
+import { formatValuationValue } from "../lib/valuationMetrics";
 import { formatPercent, formatPlainNumber } from "../lib/formatters";
 import { Card, CategoryBar, ConfidenceBadge, ChangeTag, ScoreGauge, SectionLabel, StatusBadge } from "../components/Primitives";
 import { DataUnavailable, ErrorBlock, LoadingBlock } from "../components/States";
 import { C, CATEGORY_LABELS, CATEGORY_ORDER, severityColor, severityFromImportance } from "../styles/tokens";
+import { isComparableChange } from "../lib/scoreDisplay";
 
 function OpportunityChip({ score, confidence }: { score: number | null; confidence: number }) {
   return (
@@ -75,6 +77,7 @@ export default function CompanyPage() {
   const keyFinancialValues = keyFinancials(financials ?? [], metrics ?? []);
   const thesis = analysis?.thesis;
   const isFollowed = followed.has(id);
+  const comparable = isComparableChange(fundamental);
 
   return (
     <div style={{ maxWidth: 780 }}>
@@ -99,12 +102,19 @@ export default function CompanyPage() {
       ) : (
         <Card style={{ padding: "26px 24px", marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 28, flexWrap: "wrap", marginBottom: fundamental ? 18 : 0 }}>
-            <ScoreGauge score={headline.score} label={headline.label} />
+            <ScoreGauge score={headline.score} confidence={headline.confidence} label={headline.label} />
             <div style={{ flex: 1, minWidth: 180 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
-                <StatusBadge score={headline.score} />
-                {fundamental && <ChangeTag value={fundamental.score_change} />}
-                {fundamental?.previous_score != null && <span style={{ fontSize: 12, color: C.textFaint }}>from {fundamental.previous_score}</span>}
+                <StatusBadge score={headline.score} confidence={headline.confidence} />
+                {fundamental && comparable && <ChangeTag value={fundamental.score_change} />}
+                {fundamental && comparable && fundamental.previous_score != null && (
+                  <span style={{ fontSize: 12, color: C.textFaint }}>from {fundamental.previous_score}</span>
+                )}
+                {fundamental && !comparable && fundamental.previous_calculation_version && (
+                  <span title="A score change is only meaningful between two scores from the same scoring model." style={{ fontSize: 11.5, color: C.textFaint, fontStyle: "italic" }}>
+                    scored under a new model ({fundamental.previous_calculation_version} → {fundamental.calculation_version}) — not compared to the prior score
+                  </span>
+                )}
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <ConfidenceBadge confidence={headline.confidence} />
@@ -190,15 +200,12 @@ export default function CompanyPage() {
             <div key={m.metricName}>
               <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 4 }}>{m.label}</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>
-                {m.value != null ? m.value : <DataUnavailable />}
+                {m.value != null ? formatValuationValue(m) : <DataUnavailable />}
               </div>
               {m.periodEnd && <div style={{ fontSize: 11, color: C.textFaint, marginTop: 6 }}>{m.periodEnd}</div>}
             </div>
           ))}
         </div>
-        <p style={{ fontSize: 11, color: C.textFaint, marginTop: 14, marginBottom: 0 }}>
-          Valuation multiples require market-price data the current pipeline does not yet ingest — shown here for when that becomes available, not fabricated in the meantime.
-        </p>
       </Card>
 
       <Card style={{ padding: "22px 24px", marginBottom: 16 }}>

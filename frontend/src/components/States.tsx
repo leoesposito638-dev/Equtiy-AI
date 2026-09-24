@@ -8,14 +8,27 @@ import React from "react";
 import { WifiOff, AlertCircle, Loader2 } from "lucide-react";
 import { C } from "../styles/tokens";
 
-export function DemoBanner({ show }: { show: boolean }) {
+/** Milestone 16B: the banner must say WHEN this snapshot was captured and
+ * WHICH scoring version it reflects, not just that it's a snapshot — a
+ * generic "showing real data" notice reads as reassurance, not a warning,
+ * and hides that the numbers behind it can be several scoring versions
+ * stale (see scoreDisplay.ts's isComparableChange for why that matters). */
+export function DemoBanner({ show, meta }: { show: boolean; meta?: { generatedAt: string; calculationVersion: string } }) {
   if (!show) return null;
+  const capturedLabel = meta
+    ? new Date(meta.generatedAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
+    : null;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", backgroundColor: C.amberSoft, borderBottom: `1px solid ${C.border}`, fontSize: 12.5, color: "#6B5420" }}>
       <WifiOff size={14} strokeWidth={2} />
       <span>
-        <strong>Local snapshot.</strong> No live backend connected — showing a real data snapshot captured from Supabase, not fabricated values (see src/data/realDemoSnapshot.json).
-        Set <code style={{ background: "rgba(0,0,0,0.06)", padding: "1px 5px", borderRadius: 4 }}>VITE_API_BASE_URL</code> to go live.
+        <strong>Not live.</strong>{" "}
+        {meta ? (
+          <>Showing a snapshot captured <strong>{capturedLabel}</strong>, scoring <strong>{meta.calculationVersion}</strong> — real data, but frozen at that moment and not updated since.</>
+        ) : (
+          <>Showing a real data snapshot captured from Supabase, not fabricated values.</>
+        )}{" "}
+        Set <code style={{ background: "rgba(0,0,0,0.06)", padding: "1px 5px", borderRadius: 4 }}>VITE_API_BASE_URL</code> to connect to the current database.
       </span>
     </div>
   );

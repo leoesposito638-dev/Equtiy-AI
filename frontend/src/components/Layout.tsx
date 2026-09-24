@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom";
 import { Sidebar, MobileNav, TopBar } from "./Nav";
 import { DemoBanner } from "./States";
 import { DEMO_MODE } from "../lib/config";
+import { SNAPSHOT_META } from "../lib/fixtures";
 import { useAlerts } from "../lib/useApi";
 import { C, FONT } from "../styles/tokens";
 
@@ -15,7 +16,7 @@ export default function Layout() {
       <Sidebar alertCount={alertCount} />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <TopBar />
-        <DemoBanner show={DEMO_MODE} />
+        <DemoBanner show={DEMO_MODE} meta={SNAPSHOT_META} />
         <div style={{ flex: 1, padding: "28px 20px 90px", overflowX: "hidden" }}>
           <div style={{ padding: "0 4px" }}>
             <Outlet />

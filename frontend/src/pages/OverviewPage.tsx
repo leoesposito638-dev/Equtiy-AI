@@ -8,6 +8,7 @@ import { DiscoveryCard } from "../components/DiscoveryCard";
 import { Card, SectionLabel, ChangeTag } from "../components/Primitives";
 import { ErrorBlock, LoadingBlock } from "../components/States";
 import { C } from "../styles/tokens";
+import { isComparableChange } from "../lib/scoreDisplay";
 import type { Company } from "../lib/types";
 import { useFollowed } from "../lib/followedContext";
 
@@ -18,17 +19,22 @@ function WhatChangedRow({ company }: { company: Company }) {
   const fundamental = scores?.fundamental;
   const topChange = changes?.[0];
   if (!fundamental || !topChange) return null;
+  const comparable = isComparableChange(fundamental);
 
   return (
     <Card style={{ padding: 18, cursor: "pointer" }} onClick={() => navigate(`/company/${company.id}`)}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{company.name}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
-          <span style={{ color: C.textFaint }}>{fundamental.previous_score}</span>
-          <ChevronRight size={12} color={C.textFaint} />
-          <span style={{ fontWeight: 700, color: C.text }}>{fundamental.score}</span>
-          <ChangeTag value={fundamental.score_change} />
-        </div>
+        {comparable ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: C.textFaint }}>{fundamental.previous_score}</span>
+            <ChevronRight size={12} color={C.textFaint} />
+            <span style={{ fontWeight: 700, color: C.text }}>{fundamental.score}</span>
+            <ChangeTag value={fundamental.score_change} />
+          </div>
+        ) : (
+          <span style={{ fontWeight: 700, color: C.text, fontSize: 13, fontVariantNumeric: "tabular-nums" }}>{fundamental.score}</span>
+        )}
       </div>
       <p style={{ fontSize: 13, color: C.textSoft, margin: 0, lineHeight: 1.5 }}>
         {topChange.event_type === "SCORE_CHANGE" ? `Fundamental score moved by ${topChange.absolute_change}.` : `${topChange.metric_name} changed.`}

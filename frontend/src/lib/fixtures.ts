@@ -28,3 +28,26 @@ export const FIXTURE_VALUATION = snapshot.valuation as unknown as Record<string,
 export const FIXTURE_ANALYSIS = snapshot.analysis as unknown as Record<string, AnalysisResponse>;
 export const FIXTURE_CHANGES = snapshot.changes as unknown as Record<string, ChangeEventRow[]>;
 export const FIXTURE_ALERTS = snapshot.alerts as unknown as AlertRow[];
+
+// Milestone 16B: the snapshot is real data, but it's a point-in-time
+// capture — the scoring pipeline has moved on since (v1.1 -> v1.2 -> v1.3
+// and beyond) and the snapshot never updates itself. DemoBanner must say
+// exactly how stale it is rather than passing silently as if it were
+// current. Derived from the snapshot's own contents, not hand-typed, so it
+// can never drift from what's actually in the file.
+function deriveSnapshotCalculationVersion(): string {
+  const versions = new Set(
+    Object.values(snapshot.scores as Record<string, ScoresResponse>)
+      .map((s) => s.fundamental?.calculation_version)
+      .filter((v): v is string => Boolean(v))
+  );
+  const list = [...versions];
+  if (list.length === 0) return "unknown";
+  if (list.length === 1) return list[0]!;
+  return "mixed (" + list.sort().join(", ") + ")";
+}
+
+export const SNAPSHOT_META = {
+  generatedAt: snapshot.generatedAt as string,
+  calculationVersion: deriveSnapshotCalculationVersion(),
+};
